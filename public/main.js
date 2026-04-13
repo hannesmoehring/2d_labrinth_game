@@ -293,7 +293,29 @@ function onLevelComplete() {
   stopTimer();
   state.timeMs = startTime ? Date.now() - startTime : 0;
 
-  showNameEntry();
+  const isLast    = state.levelIndex >= VALID_LEVELS.length - 1;
+  const savedName = localStorage.getItem('playerName') || '';
+
+  if (savedName) {
+    // Name already known — show a minimal "submitting" overlay then go straight
+    // to the leaderboard without asking again.
+    const opt = OPTIMAL_MOVES[state.levelIndex];
+    overlayBox.innerHTML = `
+      <p class="overlay-title">Level ${state.levelIndex + 1} complete!</p>
+      <p class="overlay-meta">
+        <strong>${formatTime(state.timeMs)}</strong>
+        &nbsp;·&nbsp;
+        <strong>${state.moves}</strong> moves
+        &nbsp;·&nbsp;
+        Optimal: ${opt}
+      </p>
+      <p class="overlay-meta">Submitting…</p>
+    `;
+    overlay.classList.remove('hidden');
+    submitCompletion(savedName, isLast);
+  } else {
+    showNameEntry();
+  }
 }
 
 function showNameEntry() {

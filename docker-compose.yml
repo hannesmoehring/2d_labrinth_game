@@ -1,0 +1,31 @@
+services:
+  sliding-puzzle:
+    build: .
+    container_name: sliding-puzzle
+    restart: unless-stopped
+
+    # The DB lives on the host; mount as a named volume so it
+    # survives container rebuilds, updates, and restarts.
+    volumes:
+      - puzzle-db:/app/data
+
+    environment:
+      # server.js reads process.env.PORT
+      PORT: 3000
+      # Tell db.js to write the SQLite file into the mounted volume
+      DB_PATH: /app/data/puzzle.db
+
+    # Only reachable through nginx — no host port binding needed.
+    expose:
+      - "3000"
+
+    networks:
+      - nginx_default_network
+
+volumes:
+  puzzle-db:
+    driver: local
+
+networks:
+  nginx_default_network:
+    external: true
