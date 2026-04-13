@@ -20,12 +20,12 @@ services:
       - "3000"
 
     networks:
-      - nginx_default_network
+      - nginx_proxy_manager_default
 
 volumes:
   puzzle-db:
     driver: local
 
 networks:
-  nginx_default_network:
+  nginx_proxy_manager_default:
     external: true
