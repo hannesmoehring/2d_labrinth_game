@@ -239,6 +239,27 @@ function main() {
   const db = new Database(process.env.DB_PATH ?? path.join(__dirname, 'puzzle.db'));
   db.pragma('journal_mode = WAL');
 
+  // Ensure schema exists (generator may run before server.js ever starts)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS levels (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      map         TEXT    NOT NULL,
+      order_index INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS completions (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      level_id     INTEGER NOT NULL,
+      player_name  TEXT    NOT NULL,
+      time_ms      INTEGER NOT NULL,
+      moves        INTEGER NOT NULL,
+      completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (level_id) REFERENCES levels(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_completions_level_time
+      ON completions(level_id, time_ms);
+  `);
+
   // Find current max order_index so we append after existing levels
   const { maxIdx } = db.prepare('SELECT COALESCE(MAX(order_index), -1) AS maxIdx FROM levels').get();
   const startIdx   = maxIdx + 1;
