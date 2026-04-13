@@ -1,0 +1,6 @@
+node_modules/
+puzzle.db
+puzzle.db-shm
+puzzle.db-wal
+*.db-journal
+.env
