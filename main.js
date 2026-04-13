@@ -114,6 +114,95 @@ const LEVELS = [
 ];
 
 // ─────────────────────────────────────────────
+//  BFS SOLVER
+//  Returns minimum move count to solve a level,
+//  or -1 if no solution exists.
+// ─────────────────────────────────────────────
+
+// Slide from (r,c) in direction (dr,dc), stopping before walls/bounds.
+function slideInGrid(grid, rows, cols, r, c, dr, dc) {
+  while (true) {
+    const nr = r + dr;
+    const nc = c + dc;
+    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) break;
+    if (grid[nr][nc] === '#') break;
+    r = nr;
+    c = nc;
+  }
+  return [r, c];
+}
+
+// BFS over (row, col) position states.
+function solveLevel(rawLevel) {
+  const rows = rawLevel.length;
+  const cols = rawLevel[0].length;
+  const grid = rawLevel.map(row => row.split(''));
+
+  let sr, sc, gr, gc;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (grid[r][c] === 'S') { sr = r; sc = c; }
+      if (grid[r][c] === 'G') { gr = r; gc = c; }
+    }
+  }
+
+  // Encode (r,c) as a single integer for fast Set lookups
+  const key = (r, c) => r * cols + c;
+  const visited = new Set([key(sr, sc)]);
+  let queue = [[sr, sc, 0]];
+
+  const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+
+  while (queue.length) {
+    const next = [];
+    for (const [r, c, dist] of queue) {
+      for (const [dr, dc] of DIRS) {
+        const [nr, nc] = slideInGrid(grid, rows, cols, r, c, dr, dc);
+        if (nr === r && nc === c) continue; // no movement
+        if (nr === gr && nc === gc) return dist + 1;
+        const k = key(nr, nc);
+        if (!visited.has(k)) {
+          visited.add(k);
+          next.push([nr, nc, dist + 1]);
+        }
+      }
+    }
+    queue = next;
+  }
+
+  return -1; // unsolvable
+}
+
+// ─────────────────────────────────────────────
+//  DIFFICULTY
+// ─────────────────────────────────────────────
+function getDifficulty(optimalMoves, rows, cols) {
+  // Score combines move complexity with grid area
+  const score = optimalMoves + Math.floor((rows * cols) / 25);
+  if (score <= 4)  return { label: 'Easy',   cssClass: 'diff-easy'   };
+  if (score <= 8)  return { label: 'Medium',  cssClass: 'diff-medium' };
+  if (score <= 12) return { label: 'Hard',    cssClass: 'diff-hard'   };
+  return                   { label: 'Expert', cssClass: 'diff-expert' };
+}
+
+// ─────────────────────────────────────────────
+//  LEVEL VALIDATION
+//  Run BFS at startup; discard unsolvable levels.
+// ─────────────────────────────────────────────
+const VALID_LEVELS  = [];
+const OPTIMAL_MOVES = [];
+
+for (let i = 0; i < LEVELS.length; i++) {
+  const opt = solveLevel(LEVELS[i]);
+  if (opt === -1) {
+    console.warn(`Level ${i + 1} is unsolvable — skipped.`);
+  } else {
+    VALID_LEVELS.push(LEVELS[i]);
+    OPTIMAL_MOVES.push(opt);
+  }
+}
+
+// ─────────────────────────────────────────────
 //  STATE
 // ─────────────────────────────────────────────
 const state = {
@@ -128,17 +217,23 @@ const state = {
   goalRow: 0,
   goalCol: 0,
   moves: 0,
-  inputLocked: false,  // true during level-complete delay
+  inputLocked: false,  // true while overlay is shown
+  _pendingWin: false,  // win detected mid-animation; fire after slide ends
 };
+
+// Module-level animation flag (separate from inputLocked to keep concerns clear)
+let isAnimating = false;
 
 // ─────────────────────────────────────────────
 //  LEVEL LOADING
 // ─────────────────────────────────────────────
 function loadLevel(index) {
-  const raw = LEVELS[index];
+  const raw = VALID_LEVELS[index];
   state.levelIndex = index;
   state.moves = 0;
   state.inputLocked = false;
+  state._pendingWin = false;
+  isAnimating = false;
   state.grid = [];
 
   state.rows = raw.length;
@@ -163,6 +258,15 @@ function loadLevel(index) {
     }
   }
 
+  // Update difficulty bar
+  const opt = OPTIMAL_MOVES[index];
+  const { label, cssClass } = getDifficulty(opt, state.rows, state.cols);
+  document.getElementById('detail-dims').textContent    = `${state.cols}×${state.rows}`;
+  document.getElementById('detail-optimal').textContent = `Optimal: ${opt}`;
+  const diffEl = document.getElementById('detail-difficulty');
+  diffEl.textContent = label;
+  diffEl.className   = cssClass;
+
   hideOverlay();
   render();
 }
@@ -170,14 +274,14 @@ function loadLevel(index) {
 // ─────────────────────────────────────────────
 //  RENDERING
 // ─────────────────────────────────────────────
-const boardEl   = document.getElementById('board');
-const levelLabel = document.getElementById('level-label');
+const boardEl     = document.getElementById('board');
+const levelLabel  = document.getElementById('level-label');
 const moveCounter = document.getElementById('move-counter');
 
 function render() {
-  // Compute a reasonable tile size based on the grid dimensions
-  const maxBoardPx = Math.min(window.innerWidth - 40, window.innerHeight - 140);
-  const tileSize = Math.max(24, Math.floor(maxBoardPx / Math.max(state.rows, state.cols)));
+  // Compute tile size that fits within the viewport
+  const maxBoardPx = Math.min(window.innerWidth - 40, window.innerHeight - 180);
+  const tileSize   = Math.max(24, Math.floor(maxBoardPx / Math.max(state.rows, state.cols)));
 
   boardEl.style.setProperty('--cols', state.cols);
   boardEl.style.setProperty('--rows', state.rows);
@@ -196,7 +300,7 @@ function render() {
         tile.classList.add('wall');
       } else {
         tile.classList.add('floor');
-        if (ch === 'G' || (r === state.goalRow && c === state.goalCol)) {
+        if (r === state.goalRow && c === state.goalCol) {
           tile.classList.add('goal');
         }
       }
@@ -209,8 +313,67 @@ function render() {
     }
   }
 
-  levelLabel.textContent  = `Level ${state.levelIndex + 1} / ${LEVELS.length}`;
+  levelLabel.textContent  = `Level ${state.levelIndex + 1} / ${VALID_LEVELS.length}`;
   moveCounter.textContent = `Moves: ${state.moves}`;
+}
+
+// ─────────────────────────────────────────────
+//  SLIDING ANIMATION
+//  Called after render() with the old and new player positions.
+//  Offsets the player div to its old position, then transitions
+//  it to the natural (new) position, creating a slide effect.
+// ─────────────────────────────────────────────
+function animatePlayer(fromRow, fromCol, toRow, toCol) {
+  // Zero-distance moves (already blocked by move() guard, but be defensive)
+  if (fromRow === toRow && fromCol === toCol) return;
+
+  isAnimating = true;
+
+  const tileSize = parseInt(
+    getComputedStyle(boardEl).getPropertyValue('--tile-size'), 10
+  );
+  const gap = 2; // matches the CSS `gap: 2px` on #board
+
+  // How far to offset: place the div visually back at (fromRow, fromCol)
+  const dx = (fromCol - toCol) * (tileSize + gap);
+  const dy = (fromRow - toRow) * (tileSize + gap);
+
+  const playerEl = boardEl.querySelector('.tile.player');
+  if (!playerEl) {
+    isAnimating = false;
+    return;
+  }
+
+  // Set starting offset with no transition
+  playerEl.style.transition = 'none';
+  playerEl.style.transform  = `translate(${dx}px, ${dy}px)`;
+
+  // Force a reflow so the browser registers the starting transform
+  // before we enable the transition
+  playerEl.getBoundingClientRect();
+
+  // Animate back to natural position
+  playerEl.style.transition = 'transform 0.18s ease-out';
+  playerEl.style.transform  = 'translate(0, 0)';
+
+  // Cleanup after the transition completes
+  function onDone() {
+    playerEl.style.transition = '';
+    playerEl.style.transform  = '';
+    isAnimating = false;
+    if (state._pendingWin) {
+      state._pendingWin = false;
+      onLevelComplete();
+    }
+  }
+
+  playerEl.addEventListener('transitionend', onDone, { once: true });
+
+  // Fallback: if transitionend never fires (e.g. display:none, tab hidden),
+  // force cleanup after a safe margin beyond the animation duration.
+  setTimeout(() => {
+    if (isAnimating) onDone();
+  }, 280);
 }
 
 // ─────────────────────────────────────────────
@@ -222,7 +385,7 @@ function isBlocked(r, c) {
 }
 
 function move(dr, dc) {
-  if (state.inputLocked) return;
+  if (state.inputLocked || isAnimating) return;
 
   let r = state.playerRow;
   let c = state.playerCol;
@@ -236,46 +399,45 @@ function move(dr, dc) {
     c += dc;
   }
 
-  // Only count as a move if position actually changed
+  // No actual movement
   if (r === state.playerRow && c === state.playerCol) return;
+
+  const fromRow = state.playerRow;
+  const fromCol = state.playerCol;
 
   state.playerRow = r;
   state.playerCol = c;
   state.moves++;
 
-  render();
+  // Detect win before render so we can defer the overlay until after animation
+  state._pendingWin = (r === state.goalRow && c === state.goalCol);
 
-  // Check win condition
-  if (r === state.goalRow && c === state.goalCol) {
-    onLevelComplete();
-  }
+  render();
+  animatePlayer(fromRow, fromCol, r, c);
+
+  // For the non-animation win path (if animatePlayer somehow skips): handled in onDone()
 }
 
 // ─────────────────────────────────────────────
 //  WIN / LEVEL PROGRESSION
 // ─────────────────────────────────────────────
-const overlay     = document.getElementById('overlay');
-const overlayMsg  = document.getElementById('overlay-message');
-const overlayBtn  = document.getElementById('overlay-btn');
+const overlay    = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlay-message');
+const overlayBtn = document.getElementById('overlay-btn');
 
 function onLevelComplete() {
   state.inputLocked = true;
 
-  const isLast = state.levelIndex >= LEVELS.length - 1;
+  const isLast = state.levelIndex >= VALID_LEVELS.length - 1;
 
   if (isLast) {
     showOverlay(
-      `You solved all ${LEVELS.length} levels!`,
+      `You solved all ${VALID_LEVELS.length} levels!`,
       'Play again',
       () => loadLevel(0)
     );
   } else {
-    showOverlay(
-      `Level ${state.levelIndex + 1} complete!`,
-      null,
-      null
-    );
-    // Auto-advance after 1.4 s
+    showOverlay(`Level ${state.levelIndex + 1} complete!`, null, null);
     setTimeout(() => loadLevel(state.levelIndex + 1), 1400);
   }
 }
@@ -302,7 +464,6 @@ function hideOverlay() {
 //  RESET
 // ─────────────────────────────────────────────
 function resetLevel() {
-  // Allow reset even while input is locked (e.g. mid-overlay)
   loadLevel(state.levelIndex);
 }
 
@@ -316,23 +477,23 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowLeft':  case 'a': case 'A': move( 0, -1); break;
     case 'ArrowRight': case 'd': case 'D': move( 0,  1); break;
     case ' ':
-      // Space resets; if on final-complete overlay it restarts from level 1
       if (!overlay.classList.contains('hidden') && overlayBtn.onclick) {
         overlayBtn.onclick();
       } else {
         resetLevel();
       }
       break;
-    default: return; // don't preventDefault for unhandled keys
+    default: return;
   }
-  e.preventDefault(); // suppress scroll for arrow / space
+  e.preventDefault();
 });
 
-// Reset button in UI bar
 document.getElementById('restart-btn').addEventListener('click', resetLevel);
 
-// Re-render on window resize (tile size recalculates)
-window.addEventListener('resize', () => render());
+// Skip re-render during animation to avoid interrupting the slide
+window.addEventListener('resize', () => {
+  if (!isAnimating) render();
+});
 
 // ─────────────────────────────────────────────
 //  BOOT
