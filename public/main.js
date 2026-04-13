@@ -107,6 +107,7 @@ function applyFilter(diff) {
 }
 
 function setupFilterButtons() {
+  console.log('[filter] setupFilterButtons — total levels:', VALID_LEVELS.length);
   // Count levels per difficulty so the button labels show availability
   const counts = { Easy: 0, Medium: 0, Hard: 0, Expert: 0 };
   LEVEL_DIFFS.forEach(d => { counts[d] = (counts[d] ?? 0) + 1; });
@@ -577,6 +578,7 @@ async function fetchLevels() {
     setupFilterButtons();
     loadLevel(0);
   } catch (err) {
+    console.error('[fetchLevels] failed:', err);
     document.getElementById('board').textContent =
       `Failed to load levels: ${err.message}`;
   }
