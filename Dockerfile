@@ -15,4 +15,4 @@ COPY public/ public/
 
 EXPOSE 3000
 
-CMD node generate-levels.js 100 && node server.js
+CMD node generate-levels.js 500 && node server.js

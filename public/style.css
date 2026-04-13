@@ -40,6 +40,37 @@ body {
 }
 #restart-btn:hover { border-color: #a0c4ff; color: #a0c4ff; }
 
+/* ── Difficulty filter ── */
+#difficulty-filter {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.diff-btn {
+  background: none;
+  border: 1px solid #333;
+  color: #606080;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.8rem;
+  border-radius: 3px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+/* Active state: border + text take the difficulty colour */
+.diff-btn.active              { color: #e0e0e0;  border-color: #606080; background: #ffffff11; }
+.diff-btn.diff-easy.active    { color: #69f0ae;  border-color: #69f0ae; background: #69f0ae18; }
+.diff-btn.diff-medium.active  { color: #ffeb3b;  border-color: #ffeb3b; background: #ffeb3b18; }
+.diff-btn.diff-hard.active    { color: #ff9800;  border-color: #ff9800; background: #ff980018; }
+.diff-btn.diff-expert.active  { color: #f44336;  border-color: #f44336; background: #f4433618; }
+
+/* Hover for inactive buttons */
+.diff-btn:not(.active):hover { border-color: #505070; color: #909090; }
+
 /* ── Level details bar ── */
 #level-details {
   display: flex;

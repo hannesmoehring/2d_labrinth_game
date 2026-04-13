@@ -64,12 +64,69 @@ function getDifficulty(optimalMoves, rows, cols) {
 let VALID_LEVELS  = [];   // raw map arrays
 let OPTIMAL_MOVES = [];   // parallel optimal move counts
 let LEVEL_IDS     = [];   // server-assigned IDs (for leaderboard API)
+let LEVEL_DIFFS   = [];   // parallel difficulty labels ('Easy'|'Medium'|'Hard'|'Expert')
+
+// ─────────────────────────────────────────────
+//  FILTER
+//  FILTERED_INDICES holds indices into the above
+//  arrays that match the active difficulty filter.
+// ─────────────────────────────────────────────
+let activeDifficulty = null;   // null = All
+let FILTERED_INDICES = [];
+
+function realIdx() {
+  return FILTERED_INDICES[state.levelIndex];
+}
+
+function applyFilter(diff) {
+  activeDifficulty = diff === 'All' ? null : diff;
+
+  FILTERED_INDICES = VALID_LEVELS
+    .map((_, i) => i)
+    .filter(i => activeDifficulty === null || LEVEL_DIFFS[i] === activeDifficulty);
+
+  // Sync button active state
+  document.querySelectorAll('.diff-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.diff === (activeDifficulty ?? 'All'));
+  });
+
+  if (FILTERED_INDICES.length === 0) {
+    hideOverlay();
+    boardEl.innerHTML = '';
+    levelLabel.textContent  = '0 levels';
+    moveCounter.textContent = '';
+    document.getElementById('detail-dims').textContent    = '';
+    document.getElementById('detail-optimal').textContent = '';
+    const diffEl = document.getElementById('detail-difficulty');
+    diffEl.textContent = `No ${activeDifficulty} levels yet`;
+    diffEl.className   = '';
+    return;
+  }
+
+  loadLevel(0);
+}
+
+function setupFilterButtons() {
+  // Count levels per difficulty so the button labels show availability
+  const counts = { Easy: 0, Medium: 0, Hard: 0, Expert: 0 };
+  LEVEL_DIFFS.forEach(d => { counts[d] = (counts[d] ?? 0) + 1; });
+
+  document.querySelectorAll('.diff-btn').forEach(btn => {
+    const diff = btn.dataset.diff;
+    if (diff !== 'All') {
+      btn.textContent = `${diff} (${counts[diff] ?? 0})`;
+    } else {
+      btn.textContent = `All (${VALID_LEVELS.length})`;
+    }
+    btn.addEventListener('click', () => applyFilter(diff));
+  });
+}
 
 // ─────────────────────────────────────────────
 //  STATE
 // ─────────────────────────────────────────────
 const state = {
-  levelIndex: 0,
+  levelIndex: 0,       // position within FILTERED_INDICES
   levelId: null,       // server ID for current level (used in API calls)
   grid: [],
   rows: 0,
@@ -142,9 +199,10 @@ function escapeHtml(str) {
 //  LEVEL LOADING
 // ─────────────────────────────────────────────
 function loadLevel(index) {
-  const raw = VALID_LEVELS[index];
   state.levelIndex  = index;
-  state.levelId     = LEVEL_IDS[index];
+  const ri          = realIdx();            // real index into full arrays
+  const raw         = VALID_LEVELS[ri];
+  state.levelId     = LEVEL_IDS[ri];
   state.moves       = 0;
   state.timeMs      = 0;
   state.inputLocked = false;
@@ -168,7 +226,7 @@ function loadLevel(index) {
   }
 
   // Update difficulty bar
-  const opt              = OPTIMAL_MOVES[index];
+  const opt              = OPTIMAL_MOVES[ri];
   const { label, cssClass } = getDifficulty(opt, state.rows, state.cols);
   document.getElementById('detail-dims').textContent    = `${state.cols}×${state.rows}`;
   document.getElementById('detail-optimal').textContent = `Optimal: ${opt}`;
@@ -212,7 +270,7 @@ function render() {
     }
   }
 
-  levelLabel.textContent  = `Level ${state.levelIndex + 1} / ${VALID_LEVELS.length}`;
+  levelLabel.textContent  = `Level ${state.levelIndex + 1} / ${FILTERED_INDICES.length}`;
   moveCounter.textContent = `Moves: ${state.moves}`;
 }
 
@@ -293,13 +351,11 @@ function onLevelComplete() {
   stopTimer();
   state.timeMs = startTime ? Date.now() - startTime : 0;
 
-  const isLast    = state.levelIndex >= VALID_LEVELS.length - 1;
+  const isLast    = state.levelIndex >= FILTERED_INDICES.length - 1;
   const savedName = localStorage.getItem('playerName') || '';
 
   if (savedName) {
-    // Name already known — show a minimal "submitting" overlay then go straight
-    // to the leaderboard without asking again.
-    const opt = OPTIMAL_MOVES[state.levelIndex];
+    const opt = OPTIMAL_MOVES[realIdx()];
     overlayBox.innerHTML = `
       <p class="overlay-title">Level ${state.levelIndex + 1} complete!</p>
       <p class="overlay-meta">
@@ -319,10 +375,8 @@ function onLevelComplete() {
 }
 
 function showNameEntry() {
-  const opt    = OPTIMAL_MOVES[state.levelIndex];
-  const isLast = state.levelIndex >= VALID_LEVELS.length - 1;
-
-  // Pre-fill from last session if available
+  const opt     = OPTIMAL_MOVES[realIdx()];
+  const isLast  = state.levelIndex >= FILTERED_INDICES.length - 1;
   const savedName = localStorage.getItem('playerName') || '';
 
   overlayBox.innerHTML = `
@@ -349,10 +403,9 @@ function showNameEntry() {
 
   overlay.classList.remove('hidden');
 
-  const input  = document.getElementById('name-input');
-  const btn    = document.getElementById('name-submit');
+  const input = document.getElementById('name-input');
+  const btn   = document.getElementById('name-submit');
 
-  // Focus and select so the player can type immediately
   input.focus();
   input.select();
 
@@ -386,7 +439,6 @@ async function submitCompletion(playerName, isLast) {
     const data = await res.json();
     showLeaderboard(data, isLast);
   } catch {
-    // Server unreachable — still let the player advance
     overlayBox.innerHTML = `
       <p class="overlay-title">Level ${state.levelIndex + 1} complete!</p>
       <p class="overlay-error">Could not reach the server. Score not saved.</p>
@@ -412,7 +464,6 @@ function showLeaderboard({ completionId, rank, top, stats }, isLast) {
     `;
   }).join('');
 
-  // Show player rank below table if they didn't make the top 10
   const rankNote = rank > 10
     ? `<p class="rank-note">Your rank: <strong>#${rank}</strong> — ${formatTime(state.timeMs)} · ${state.moves} moves</p>`
     : '';
@@ -468,7 +519,6 @@ function resetLevel() {
 //  INPUT HANDLING
 // ─────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  // If the name input is focused, let it handle its own keys
   if (document.activeElement && document.activeElement.id === 'name-input') return;
 
   switch (e.key) {
@@ -478,7 +528,6 @@ document.addEventListener('keydown', e => {
     case 'ArrowRight': case 'd': case 'D': move( 0,  1); break;
     case ' ':
       if (!overlay.classList.contains('hidden')) {
-        // Click the primary action button if leaderboard is shown
         const btn = overlay.querySelector('.primary-btn');
         if (btn && !btn.disabled) btn.click();
       } else {
@@ -501,7 +550,7 @@ async function fetchLevels() {
   try {
     const res    = await fetch('/api/levels');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const levels = await res.json(); // [{id, name, map, order_index}, ...]
+    const levels = await res.json();
 
     for (const level of levels) {
       const opt = solveLevel(level.map);
@@ -509,9 +558,12 @@ async function fetchLevels() {
         console.warn(`"${level.name}" is unsolvable — skipped.`);
         continue;
       }
+      const rows = level.map.length;
+      const cols = level.map[0].length;
       VALID_LEVELS.push(level.map);
       OPTIMAL_MOVES.push(opt);
       LEVEL_IDS.push(level.id);
+      LEVEL_DIFFS.push(getDifficulty(opt, rows, cols).label);
     }
 
     if (VALID_LEVELS.length === 0) {
@@ -519,6 +571,10 @@ async function fetchLevels() {
       return;
     }
 
+    // All indices active by default
+    FILTERED_INDICES = VALID_LEVELS.map((_, i) => i);
+
+    setupFilterButtons();
     loadLevel(0);
   } catch (err) {
     document.getElementById('board').textContent =
