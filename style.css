@@ -1,0 +1,141 @@
+/* ── Reset & base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'Courier New', Courier, monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  user-select: none;
+}
+
+/* ── UI bar ── */
+#ui-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+}
+
+#level-label  { color: #a0c4ff; font-weight: bold; }
+#move-counter { color: #b0b0c0; }
+
+#restart-btn {
+  background: none;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.85rem;
+  border-radius: 3px;
+  transition: border-color 0.15s, color 0.15s;
+}
+#restart-btn:hover { border-color: #a0c4ff; color: #a0c4ff; }
+
+/* ── Board wrapper (keeps board centered and sized correctly) ── */
+#board-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Board grid ── */
+#board {
+  display: grid;
+  /* --cols is set from JS per level */
+  grid-template-columns: repeat(var(--cols), var(--tile-size, 48px));
+  grid-template-rows:    repeat(var(--rows), var(--tile-size, 48px));
+  gap: 2px;
+  background: #0d0d1a;
+  padding: 2px;
+  border: 2px solid #2a2a4a;
+  border-radius: 4px;
+}
+
+/* ── Tiles ── */
+.tile {
+  width:  var(--tile-size, 48px);
+  height: var(--tile-size, 48px);
+  border-radius: 3px;
+  transition: background-color 0.06s ease;
+}
+
+.tile.floor { background: #1e1e35; }
+.tile.wall  { background: #3a3a5a; }
+
+/* Goal: teal glow */
+.tile.goal {
+  background: #0d3d3d;
+  box-shadow: inset 0 0 8px #00bcd4;
+  border: 1px solid #00bcd4;
+}
+
+/* Player: bright accent */
+.tile.player {
+  background: #e040fb;
+  box-shadow: 0 0 10px #e040fb88;
+  border-radius: 6px;
+}
+
+/* Player on goal (win flash handled by JS class) */
+.tile.player.goal {
+  background: #00e5ff;
+  box-shadow: 0 0 14px #00e5ffaa;
+}
+
+/* ── Overlay ── */
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: #000000aa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#overlay.hidden { display: none; }
+
+#overlay-box {
+  background: #16213e;
+  border: 2px solid #a0c4ff;
+  border-radius: 8px;
+  padding: 40px 56px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+#overlay-message {
+  font-size: 1.5rem;
+  color: #a0c4ff;
+  letter-spacing: 0.06em;
+}
+
+#overlay-btn {
+  background: none;
+  border: 1px solid #a0c4ff;
+  color: #a0c4ff;
+  padding: 8px 24px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+#overlay-btn:hover { background: #a0c4ff22; }
+#overlay-btn.hidden { display: none; }
+
+/* ── Controls hint ── */
+#controls-hint {
+  font-size: 0.75rem;
+  color: #505070;
+  letter-spacing: 0.04em;
+}

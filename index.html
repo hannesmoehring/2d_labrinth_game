@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sliding Puzzle</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="ui-bar">
+    <span id="level-label">Level 1</span>
+    <span id="move-counter">Moves: 0</span>
+    <button id="restart-btn" title="Reset level (Space)">Reset</button>
+  </div>
+
+  <div id="board-wrapper">
+    <div id="board"></div>
+  </div>
+
+  <!-- Overlay: level complete or game complete -->
+  <div id="overlay" class="hidden">
+    <div id="overlay-box">
+      <p id="overlay-message"></p>
+      <button id="overlay-btn" class="hidden"></button>
+    </div>
+  </div>
+
+  <div id="controls-hint">WASD / Arrow keys to move &nbsp;·&nbsp; Space to reset</div>
+
+  <script src="main.js"></script>
+</body>
+</html>
