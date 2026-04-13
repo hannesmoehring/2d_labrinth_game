@@ -157,16 +157,15 @@ let isAnimating = false;
 
 // ─────────────────────────────────────────────
 //  TIMER
-//  Starts on first move; stops on win or reset.
+//  Starts when a new level loads; not reset on restart.
+//  Stops on level complete.
 // ─────────────────────────────────────────────
 let timerInterval = null;
 let startTime     = null;
-let firstMoveMade = false;
 
 function startTimer() {
   if (timerInterval) return;
   startTime     = Date.now();
-  firstMoveMade = true;
   timerInterval = setInterval(() => {
     document.getElementById('timer').textContent =
       formatTime(Date.now() - startTime);
@@ -179,8 +178,7 @@ function stopTimer() {
 
 function resetTimer() {
   stopTimer();
-  firstMoveMade = false;
-  startTime     = null;
+  startTime = null;
   document.getElementById('timer').textContent = '0.0s';
 }
 
@@ -220,6 +218,7 @@ function loadLevel(index) {
   state.grid        = [];
 
   resetTimer();
+  startTimer();
 
   state.rows = raw.length;
   state.cols = raw[0].length;
@@ -334,9 +333,6 @@ function move(dr, dc) {
 
   while (!isBlocked(r + dr, c + dc)) { r += dr; c += dc; }
   if (r === state.playerRow && c === state.playerCol) return;
-
-  // Start timer on very first move of this level
-  if (!firstMoveMade) startTimer();
 
   const fromRow = state.playerRow, fromCol = state.playerCol;
   state.playerRow = r;
@@ -521,9 +517,20 @@ function hideOverlay() {
 
 // ─────────────────────────────────────────────
 //  RESET
+//  Restores player to start and clears move count.
+//  Timer keeps running — it started when the level first appeared.
 // ─────────────────────────────────────────────
 function resetLevel() {
-  loadLevel(state.levelIndex);
+  state.moves       = 0;
+  state.inputLocked = false;
+  state._pendingWin = false;
+  isAnimating       = false;
+
+  state.playerRow = state.startRow;
+  state.playerCol = state.startCol;
+
+  hideOverlay();
+  render();
 }
 
 // ─────────────────────────────────────────────
