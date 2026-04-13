@@ -78,12 +78,20 @@ function realIdx() {
   return FILTERED_INDICES[state.levelIndex];
 }
 
+function shuffleInPlace(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
 function applyFilter(diff) {
   activeDifficulty = diff === 'All' ? null : diff;
 
   FILTERED_INDICES = VALID_LEVELS
     .map((_, i) => i)
     .filter(i => activeDifficulty === null || LEVEL_DIFFS[i] === activeDifficulty);
+  shuffleInPlace(FILTERED_INDICES);
 
   // Sync button active state
   document.querySelectorAll('.diff-btn').forEach(btn => {
@@ -295,7 +303,7 @@ function animatePlayer(fromRow, fromCol, toRow, toCol) {
   playerEl.style.transform  = `translate(${dx}px, ${dy}px)`;
   playerEl.getBoundingClientRect(); // force reflow
 
-  playerEl.style.transition = 'transform 0.18s ease-out';
+  playerEl.style.transition = 'transform 0.12s ease-out';
   playerEl.style.transform  = 'translate(0, 0)';
 
   function onDone() {
@@ -307,7 +315,7 @@ function animatePlayer(fromRow, fromCol, toRow, toCol) {
 
   playerEl.addEventListener('transitionend', onDone, { once: true });
   // Fallback if transitionend never fires (hidden tab, etc.)
-  setTimeout(() => { if (isAnimating) onDone(); }, 280);
+  setTimeout(() => { if (isAnimating) onDone(); }, 180);
 }
 
 // ─────────────────────────────────────────────
@@ -447,7 +455,8 @@ async function submitCompletion(playerName, isLast) {
     `;
     document.getElementById('next-btn').addEventListener('click', () => {
       hideOverlay();
-      isLast ? loadLevel(0) : loadLevel(state.levelIndex + 1);
+      if (isLast) { shuffleInPlace(FILTERED_INDICES); loadLevel(0); }
+      else loadLevel(state.levelIndex + 1);
     });
   }
 }
@@ -500,7 +509,8 @@ function showLeaderboard({ completionId, rank, top, stats }, isLast) {
 
   document.getElementById('next-btn').addEventListener('click', () => {
     hideOverlay();
-    isLast ? loadLevel(0) : loadLevel(state.levelIndex + 1);
+    if (isLast) { shuffleInPlace(FILTERED_INDICES); loadLevel(0); }
+    else loadLevel(state.levelIndex + 1);
   });
 }
 
@@ -572,8 +582,9 @@ async function fetchLevels() {
       return;
     }
 
-    // All indices active by default
+    // All indices active by default, shuffled for random play order
     FILTERED_INDICES = VALID_LEVELS.map((_, i) => i);
+    shuffleInPlace(FILTERED_INDICES);
 
     setupFilterButtons();
     loadLevel(0);

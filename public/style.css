@@ -110,7 +110,7 @@ body {
   width:  var(--tile-size, 48px);
   height: var(--tile-size, 48px);
   border-radius: 3px;
-  transition: background-color 0.06s ease;
+  transition: background-color 0.04s ease;
 }
 
 .tile.floor { background: #1e1e35; }
