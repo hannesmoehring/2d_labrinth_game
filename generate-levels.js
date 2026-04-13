@@ -6,6 +6,7 @@
 //    node generate-levels.js              # adds 50 levels
 //    node generate-levels.js 100          # adds 100 levels
 //    node generate-levels.js 30 --dry-run # preview without writing
+//    node generate-levels.js 100 --if-empty  # only runs when DB has 0 levels
 //
 //  Generates random sliding-puzzle levels, validates each with BFS
 //  (optimal ≤ 20 moves), and appends them to puzzle.db ordered by
@@ -18,12 +19,13 @@ const Database = require('better-sqlite3');
 const path     = require('path');
 
 // ── CLI args ─────────────────────────────────
-const args    = process.argv.slice(2);
-const DRY_RUN = args.includes('--dry-run');
-const COUNT   = parseInt(args.find(a => /^\d+$/.test(a)) ?? '50', 10);
+const args     = process.argv.slice(2);
+const DRY_RUN  = args.includes('--dry-run');
+const IF_EMPTY = args.includes('--if-empty');
+const COUNT    = parseInt(args.find(a => /^\d+$/.test(a)) ?? '50', 10);
 
 if (isNaN(COUNT) || COUNT < 1) {
-  console.error('Usage: node generate-levels.js [count=50] [--dry-run]');
+  console.error('Usage: node generate-levels.js [count=50] [--dry-run] [--if-empty]');
   process.exit(1);
 }
 
@@ -184,6 +186,22 @@ function fingerprint(map) { return map.join('|'); }
 
 // ── Main ──────────────────────────────────────
 function main() {
+  // --if-empty: skip entirely when the DB already has levels
+  if (IF_EMPTY && !DRY_RUN) {
+    const checkDb = new Database(process.env.DB_PATH ?? path.join(__dirname, 'puzzle.db'));
+    checkDb.pragma('journal_mode = WAL');
+    checkDb.exec(`CREATE TABLE IF NOT EXISTS levels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+      map TEXT NOT NULL, order_index INTEGER NOT NULL
+    )`);
+    const { n } = checkDb.prepare('SELECT COUNT(*) AS n FROM levels').get();
+    checkDb.close();
+    if (n > 0) {
+      console.log(`--if-empty: DB already has ${n} levels — skipping generation.`);
+      return;
+    }
+  }
+
   console.log(`Generating ${COUNT} level${COUNT !== 1 ? 's' : ''}…${DRY_RUN ? ' (dry run)' : ''}`);
 
   // Per-tier budget: distribute COUNT evenly, extras go to random tiers

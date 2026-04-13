@@ -10,9 +10,11 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 # Copy application source
-COPY server.js db.js generate-levels.js ./
+COPY server.js db.js generate-levels.js entrypoint.sh ./
 COPY public/ public/
+
+RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
 
-CMD node generate-levels.js 500 && node server.js
+CMD ["sh", "entrypoint.sh"]
