@@ -189,7 +189,14 @@ const stmts = {
     GROUP BY player_name
   `),
 
-  // A crown is a level whose fastest run in the window is yours.
+  // A crown is a level whose fastest time of ALL TIME is yours.
+  //
+  // Deliberately not scoped to the selected window. Scoped, it counts
+  // "fastest among runs inside the window", which drops as the window
+  // widens and more rivals join the comparison — a player could hold 296
+  // crowns over 30 days and 271 over all time. Correct arithmetic, but it
+  // sits next to columns that only ever grow, so it reads as a defect.
+  // A record is a fact about the level, not about a date range.
   playerCrowns: db.prepare(`
     SELECT player_name, COUNT(*) AS crowns
     FROM (
@@ -198,7 +205,6 @@ const stmts = {
                PARTITION BY level_id ORDER BY time_ms ASC, id ASC
              ) AS rn
       FROM completions
-      WHERE completed_at >= datetime('now', ?)
     )
     WHERE rn = 1
     GROUP BY player_name
@@ -283,10 +289,11 @@ module.exports = {
     return stmts.countLevels.get().n;
   },
 
-  // Ranked players for one time window, crowns folded in.
+  // Ranked players for one time window.
+  // Activity (levels, runs, times) is window-scoped; records are not.
   getPlayerRanking(modifier, limit = 100) {
     const crowns = new Map(
-      stmts.playerCrowns.all(modifier).map(r => [r.player_name, r.crowns]));
+      stmts.playerCrowns.all().map(r => [r.player_name, r.crowns]));
 
     const players = stmts.playerTotals.all(modifier)
       .map(r => ({ ...r, crowns: crowns.get(r.player_name) ?? 0 }))

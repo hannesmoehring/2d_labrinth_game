@@ -327,10 +327,10 @@ function goBrowse(notice) {
 
 // ─────────────────────────────────────────────
 //  LEADERBOARD SCREEN
-//  Who is fastest, over a window you choose. A crown is
-//  a level whose fastest run inside that window is yours,
-//  so the 30-day table and the all-time table tell two
-//  different stories.
+//  The window scopes activity — levels, runs, times and
+//  who appears at all. Records (★) are not scoped: a
+//  record is the fastest time a level has ever seen, so
+//  it reads the same under every window.
 // ─────────────────────────────────────────────
 function goTop() {
   stopPresence();
@@ -409,7 +409,7 @@ function renderTop({ players, totals }) {
           <span class="podium-rank">${['FIRST', 'SECOND', 'THIRD'][i]}</span>
           <span class="podium-name">${escapeHtml(p.player_name)}</span>
           <span class="podium-crowns">${p.crowns}</span>
-          <span class="podium-crowns-label">&#9733; CROWNS</span>
+          <span class="podium-crowns-label">&#9733; RECORDS</span>
           <span class="podium-meta">${p.levels} level${p.levels === 1 ? '' : 's'} · ${p.runs} run${p.runs === 1 ? '' : 's'}</span>
           <span class="podium-meta">best ${formatTime(p.best_time)}</span>
         </article>
@@ -436,8 +436,9 @@ function renderTop({ players, totals }) {
     <table class="ranking">
       <thead>
         <tr>
-          <th>#</th><th>Player</th><th>&#9733;</th><th>Levels</th>
-          <th>Runs</th><th>Best</th><th>Avg</th><th>Last</th>
+          <th>#</th><th>Player</th>
+          <th title="Levels where you hold the fastest time of all time">&#9733;</th>
+          <th>Levels</th><th>Runs</th><th>Best</th><th>Avg</th><th>Last</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>

@@ -784,3 +784,5 @@ table.ranking tr.r3 td:nth-child(1) { color: #ff9800; font-weight: bold; }
   table.ranking th:nth-child(5), table.ranking td:nth-child(5) { display: none; }
   table.ranking th, table.ranking td { padding: 7px 6px; }
 }
+
+.legend-dim { color: #3f3f5c; }
