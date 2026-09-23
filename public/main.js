@@ -116,16 +116,19 @@ function getDifficulty(optimalMoves, rows, cols) {
 //  travels in a shared link, so two devices that open
 //  the same link get the same maze.
 // ─────────────────────────────────────────────
-let LEVELS = [];              // { id, name, map, rows, cols, opt, diff, diffClass, order_index }
+let LEVELS = [];              // { id, seq, rows, cols, opt, diff, diffClass } — no maps
 const BY_ID  = new Map();     // id -> level (playable only)
 const ALL_IDS = new Set();    // every id the server sent, playable or not
 let VIEW   = [];              // ids, filter + sort applied (browse order only)
 let STATS  = new Map();       // id -> { plays, best_time, best_moves, best_name, last_at }
 let LIVE   = new Map();       // id -> presence count
 
+const MAPS = new Map();       // id -> map, fetched on entry and kept
 let activeDifficulty = null;  // null = All
 let activeSort       = 'number';
 let activeScreen     = 'browse';
+let page             = 0;     // browse grid page
+const PAGE_SIZE      = 120;   // 2762 cards at once is what broke the page
 let navToken         = 0;     // bumped on every enterLevel; async callbacks compare against it
 
 // ─────────────────────────────────────────────
@@ -164,6 +167,7 @@ const state = {
   timeMs: 0,           // elapsed ms at win
   inputLocked: false,
   started: false,      // false while the ready gate is up
+  mapReady: false,     // false until this level's map has arrived
   navToken: 0,
   _pendingWin: false,
 };
@@ -273,10 +277,12 @@ function showScreen(name) {
   else                   { stopBrowsePoll(); }
 }
 
-let pendingNotice = null;
+let pendingNotice    = null;
+let pendingAutoStart = false;   // set by Next/Retry: skip the ready gate
 
 function goBrowse(notice) {
   pendingNotice = notice ?? null;
+  const cameFrom = state.levelId;
   stopPresence();
   resetTimer();
   hideOverlay();
@@ -297,6 +303,12 @@ function goBrowse(notice) {
 
   showScreen('browse');
   renderBrowser();
+  // Come back to the page that holds the level just played, not to page 1
+  // of 23.
+  if (cameFrom !== null) {
+    const p = pageContaining(cameFrom);
+    if (p !== page) { page = p; renderBrowser(); }
+  }
   refreshStats().then(renderBrowser).catch(() => {});
 
   if (pendingNotice) {
@@ -323,18 +335,18 @@ function buildView() {
 
   if (activeSort === 'plays') {
     ids.sort((a, b) => ((STATS.get(b.id)?.plays ?? 0) - (STATS.get(a.id)?.plays ?? 0))
-                    || (a.order_index - b.order_index));
+                    || (a.seq - b.seq));
   } else if (activeSort === 'best') {
     ids.sort((a, b) => {
       const ta = STATS.get(a.id)?.best_time ?? Infinity;
       const tb = STATS.get(b.id)?.best_time ?? Infinity;
-      return (ta - tb) || (a.order_index - b.order_index);
+      return (ta - tb) || (a.seq - b.seq);
     });
   } else if (activeSort === 'unplayed') {
     ids.sort((a, b) => ((personalBest(a.id) === null ? 0 : 1) - (personalBest(b.id) === null ? 0 : 1))
-                    || (a.order_index - b.order_index));
+                    || (a.seq - b.seq));
   } else {
-    ids.sort((a, b) => a.order_index - b.order_index);
+    ids.sort((a, b) => a.seq - b.seq);
   }
 
   VIEW = ids.map(l => l.id);
@@ -370,12 +382,16 @@ function cardHtml(lvl) {
 
 function renderBrowser() {
   const levels = buildView();
+  const pages  = Math.max(1, Math.ceil(levels.length / PAGE_SIZE));
+  if (page >= pages) page = pages - 1;
+  if (page < 0) page = 0;
 
   document.getElementById('browse-count').textContent =
     `${levels.length} level${levels.length === 1 ? '' : 's'}`;
 
   if (levels.length === 0) {
     gridEl.innerHTML = '';
+    renderPager(0, 1, 0);
     emptyEl.textContent = activeDifficulty
       ? `No ${activeDifficulty} levels yet.`
       : 'No level matches.';
@@ -384,7 +400,40 @@ function renderBrowser() {
   }
 
   emptyEl.classList.add('hidden');
-  gridEl.innerHTML = levels.map(cardHtml).join('');
+  const from = page * PAGE_SIZE;
+  gridEl.innerHTML = levels.slice(from, from + PAGE_SIZE).map(cardHtml).join('');
+  renderPager(page, pages, levels.length);
+}
+
+function renderPager(current, pages, total) {
+  const el = document.getElementById('pager');
+  if (!el) return;
+
+  if (pages <= 1) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+
+  const from = current * PAGE_SIZE + 1;
+  const to   = Math.min(total, (current + 1) * PAGE_SIZE);
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <button class="ghost-btn" id="page-prev" ${current === 0 ? 'disabled' : ''}>&lsaquo; Prev</button>
+    <span class="pager-state">${from}&ndash;${to} of ${total} &nbsp;·&nbsp; page ${current + 1} / ${pages}</span>
+    <button class="ghost-btn" id="page-next" ${current >= pages - 1 ? 'disabled' : ''}>Next &rsaquo;</button>
+  `;
+  document.getElementById('page-prev').addEventListener('click', () => turnPage(-1));
+  document.getElementById('page-next').addEventListener('click', () => turnPage(1));
+}
+
+function turnPage(delta) {
+  page += delta;
+  renderBrowser();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Land on the page that holds a level, so returning from one does not
+// dump the player back at level 1 of 2762.
+function pageContaining(id) {
+  const pos = VIEW.indexOf(id);
+  return pos === -1 ? page : Math.floor(pos / PAGE_SIZE);
 }
 
 function applyFilter(diff) {
@@ -392,6 +441,7 @@ function applyFilter(diff) {
   document.querySelectorAll('.diff-btn').forEach(btn =>
     btn.classList.toggle('active', btn.dataset.diff === (activeDifficulty ?? 'All')));
   lsSet('slide:filter', diff);
+  page = 0;
   renderBrowser();
 }
 
@@ -409,6 +459,7 @@ function setupFilterButtons() {
 
   document.getElementById('sort-select').addEventListener('change', e => {
     activeSort = e.target.value;
+    page = 0;
     renderBrowser();
   });
 }
@@ -439,7 +490,7 @@ function nextLevelId() {
   if (pos !== -1 && VIEW.length > 1) return VIEW[(pos + 1) % VIEW.length];
 
   // Direct link to a level outside the active filter: walk the full list.
-  const ordered = LEVELS.slice().sort((a, b) => a.order_index - b.order_index);
+  const ordered = LEVELS.slice().sort((a, b) => a.seq - b.seq);
   const i = ordered.findIndex(l => l.id === state.levelId);
   return ordered[(i + 1) % ordered.length].id;
 }
@@ -530,7 +581,33 @@ async function shareLevel(id, btn) {
 // ─────────────────────────────────────────────
 //  LEVEL LOADING
 // ─────────────────────────────────────────────
-function enterLevel(id) {
+// The map for one level, fetched once and then kept.
+async function loadMap(id) {
+  if (MAPS.has(id)) return MAPS.get(id);
+  const res = await fetch(`/api/levels/${id}`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  MAPS.set(id, data.map);
+  if (data.name) { const l = BY_ID.get(id); if (l) l.name = data.name; }
+  return data.map;
+}
+
+function buildGrid(map) {
+  state.grid = [];
+  state.rows = map.length;
+  state.cols = map[0].length;
+  for (let r = 0; r < state.rows; r++) {
+    state.grid[r] = [];
+    for (let c = 0; c < state.cols; c++) {
+      const ch = map[r][c] ?? '.';
+      state.grid[r][c] = ch;
+      if (ch === 'S') { state.playerRow = r; state.playerCol = c; state.startRow = r; state.startCol = c; }
+      if (ch === 'G') { state.goalRow   = r; state.goalCol   = c; }
+    }
+  }
+}
+
+async function enterLevel(id) {
   const lvl = BY_ID.get(id);
   if (!lvl) {
     goBrowse(ALL_IDS.has(id)
@@ -540,6 +617,10 @@ function enterLevel(id) {
   }
 
   pendingNotice = null;
+  // Consume it here, so a later navigation never inherits it.
+  const auto = pendingAutoStart;
+  pendingAutoStart = false;
+
   const token = ++navToken;
   state.navToken    = token;
   state.levelId     = id;
@@ -548,6 +629,7 @@ function enterLevel(id) {
   state.inputLocked = false;
   state._pendingWin = false;
   state.started     = false;
+  state.mapReady    = false;
   isAnimating       = false;
   state.grid        = [];
 
@@ -560,16 +642,6 @@ function enterLevel(id) {
   state.rows = lvl.rows;
   state.cols = lvl.cols;
 
-  for (let r = 0; r < state.rows; r++) {
-    state.grid[r] = [];
-    for (let c = 0; c < state.cols; c++) {
-      const ch = lvl.map[r][c] ?? '.';
-      state.grid[r][c] = ch;
-      if (ch === 'S') { state.playerRow = r; state.playerCol = c; state.startRow = r; state.startCol = c; }
-      if (ch === 'G') { state.goalRow   = r; state.goalCol   = c; }
-    }
-  }
-
   document.getElementById('detail-dims').textContent    = `${lvl.cols}×${lvl.rows}`;
   document.getElementById('detail-optimal').textContent = `Optimal: ${lvl.opt}`;
   const diffEl = document.getElementById('detail-difficulty');
@@ -578,10 +650,26 @@ function enterLevel(id) {
   document.getElementById('detail-best').textContent = bestLine(id);
 
   showScreen('play');
+  boardEl.innerHTML = '';
+  boardEl.classList.add('concealed');
+  // On an auto-start the gate would only flash, unless the map still has to
+  // travel — then it is the "Loading…" feedback.
+  if (!auto || !MAPS.has(id)) showReadyGate(lvl, token);
+  startPresence(id);
+
+  // The board is concealed until Start anyway, so fetching the map here
+  // costs the player nothing. Start stays disabled until it lands.
+  let map = null;
+  try { map = await loadMap(id); } catch { /* handled below */ }
+  if (token !== state.navToken) return;          // the player already moved on
+  if (!map) { goBrowse(`Level #${id} could not be loaded.`); return; }
+
+  buildGrid(map);
   render();
   boardEl.classList.add('concealed');
-  showReadyGate(lvl, token);
-  startPresence(id);
+  state.mapReady = true;
+  if (auto) startRun();
+  else      markGateReady();
 }
 
 // ─────────────────────────────────────────────
@@ -714,8 +802,8 @@ function showReadyGate(lvl, token) {
     <p class="overlay-meta">${lvl.cols}×${lvl.rows} &nbsp;·&nbsp; <span class="${lvl.diffClass}">${lvl.diff}</span> &nbsp;·&nbsp; optimal ${lvl.opt}</p>
     <p class="overlay-meta" id="gate-best">${escapeHtml(bestLine(lvl.id))}</p>
     <p class="overlay-meta ${live > 1 ? '' : 'hidden'}" id="gate-live">${live} playing now</p>
-    <p class="overlay-sub">${escapeHtml(lvl.name)}</p>
-    <button class="primary-btn" id="start-btn">Start</button>
+    <p class="overlay-sub">${escapeHtml(lvl.name ?? `Level ${lvl.id}`)}</p>
+    <button class="primary-btn" id="start-btn" ${state.mapReady ? '' : 'disabled'}>${state.mapReady ? 'Start' : 'Loading…'}</button>
     <p class="overlay-hint">Space &nbsp;·&nbsp; or just move</p>
   `;
   overlay.classList.remove('hidden');
@@ -743,12 +831,23 @@ function showReadyGate(lvl, token) {
     .catch(() => {});
 }
 
+function markGateReady() {
+  const btn = document.getElementById('start-btn');
+  if (!btn) return;
+  btn.disabled    = false;
+  btn.textContent = 'Start';
+  const sub = document.querySelector('.overlay-sub');
+  const lvl = BY_ID.get(state.levelId);
+  if (sub && lvl && lvl.name) sub.textContent = lvl.name;
+}
+
 function onGateTap() {
   if (!state.started) startRun();
 }
 
 function startRun() {
   if (state.started) return;
+  if (!state.mapReady) return;   // the board is not built yet
   overlay.removeEventListener('pointerdown', onGateTap);
   boardEl.classList.remove('concealed');
   hideOverlay();
@@ -891,11 +990,13 @@ function wireActions() {
   const id = state.levelId;
   document.getElementById('retry-btn').addEventListener('click', () => {
     hideOverlay();
+    pendingAutoStart = true;
     enterLevel(id);
   });
   document.getElementById('share-win-btn').addEventListener('click', e => shareLevel(id, e.currentTarget));
   document.getElementById('next-btn').addEventListener('click', () => {
     // Replace rather than push, so Back never walks a chain of levels.
+    pendingAutoStart = true;
     const next = nextLevelId();
     try { history.replaceState(null, '', shareUrl(next)); }
     catch { /* URL stays put; the level still loads */ }
@@ -1190,7 +1291,10 @@ document.addEventListener('keydown', e => {
     case 'ArrowRight': case 'd': case 'D': tryMove( 0,  1); break;
     case 'r': case 'R':
       // On the win overlay, R means "play it again", which is a fresh run.
-      if (state.inputLocked && !overlay.classList.contains('hidden')) enterLevel(state.levelId);
+      if (state.inputLocked && !overlay.classList.contains('hidden')) {
+        pendingAutoStart = true;
+        enterLevel(state.levelId);
+      }
       else resetLevel();
       break;
     case 'Escape': goBrowse(); break;
@@ -1291,33 +1395,33 @@ function showBootError(msg) {
 }
 
 async function boot() {
-  let levels;
+  let payload;
   try {
     const res = await fetch('/api/levels');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    levels = await res.json();
-    lsSet('slide:levels', JSON.stringify(levels));
+    payload = await res.json();
+    lsSet('slide:levels', JSON.stringify(payload));
   } catch (err) {
     const cached = lsGet('slide:levels');
     if (!cached) { showBootError(`Failed to load levels: ${err.message}`); setTimeout(boot, 3000); return; }
-    try { levels = JSON.parse(cached); } catch { showBootError('Failed to load levels.'); setTimeout(boot, 3000); return; }
+    try { payload = JSON.parse(cached); } catch { showBootError('Failed to load levels.'); setTimeout(boot, 3000); return; }
   }
+
+  // The server sends sizes and move counts, never the maps. It has already
+  // dropped the unsolvable levels; their ids come back separately so a
+  // shared link to one can still say why it will not open.
+  const levels = Array.isArray(payload) ? payload : (payload.levels ?? []);
+  const dead   = Array.isArray(payload) ? [] : (payload.unplayable ?? []);
 
   LEVELS = [];
   BY_ID.clear();
   ALL_IDS.clear();
+  dead.forEach(id => ALL_IDS.add(id));
 
   for (const level of levels) {
     ALL_IDS.add(level.id);
-    let opt = -1;
-    try { opt = solveLevel(level.map); }
-    catch (err) { console.warn('level skipped', level.id, err); continue; }
-    if (opt === -1) { console.warn(`"${level.name}" is unsolvable — skipped.`); continue; }
-
-    const rows = level.map.length;
-    const cols = level.map[0].length;
-    const { label, cssClass } = getDifficulty(opt, rows, cols);
-    const o = { ...level, rows, cols, opt, diff: label, diffClass: cssClass };
+    const { label, cssClass } = getDifficulty(level.opt, level.rows, level.cols);
+    const o = { ...level, seq: LEVELS.length, diff: label, diffClass: cssClass };
     LEVELS.push(o);
     BY_ID.set(o.id, o);
   }
@@ -1351,11 +1455,12 @@ async function boot() {
 //  boundary — the leaderboard is already open to curl.
 // ─────────────────────────────────────────────
 async function autoSolve() {
-  const lvl = BY_ID.get(state.levelId);
-  if (!lvl) return false;
+  const map = MAPS.get(state.levelId);
+  if (!map) return false;
   if (!state.started) startRun();
+  if (!state.started) return false;
 
-  const path = solvePath(lvl.map);
+  const path = solvePath(map);
   if (!path) return false;
 
   for (const [dr, dc] of path) {
@@ -1366,7 +1471,7 @@ async function autoSolve() {
 }
 
 window.__slide = {
-  state, BY_ID,
+  state, BY_ID, MAPS, loadMap,
   enterLevel, move, tryMove, solveLevel, solvePath, autoSolve,
   startRun, goBrowse, shareUrl, resetLevel,
   // Getters, because these three are reassigned, not mutated.

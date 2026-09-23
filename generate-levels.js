@@ -52,38 +52,9 @@ function randFloat(lo, hi) { return lo + rand() * (hi - lo); }
 function pick(arr)         { return arr[Math.floor(rand() * arr.length)]; }
 
 // ── BFS solver ────────────────────────────────
-// Returns optimal move count, or -1 if unreachable.
-function slideInGrid(grid, rows, cols, r, c, dr, dc) {
-  while (true) {
-    const nr = r + dr, nc = c + dc;
-    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) break;
-    if (grid[nr][nc] === '#') break;
-    r = nr; c = nc;
-  }
-  return [r, c];
-}
-
-function bfsSolve(grid, rows, cols, sr, sc, gr, gc) {
-  const key     = (r, c) => r * cols + c;
-  const visited = new Set([key(sr, sc)]);
-  let   queue   = [[sr, sc, 0]];
-  const DIRS    = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-
-  while (queue.length) {
-    const next = [];
-    for (const [r, c, dist] of queue) {
-      for (const [dr, dc] of DIRS) {
-        const [nr, nc] = slideInGrid(grid, rows, cols, r, c, dr, dc);
-        if (nr === r && nc === c) continue;
-        if (nr === gr && nc === gc) return dist + 1;
-        const k = key(nr, nc);
-        if (!visited.has(k)) { visited.add(k); next.push([nr, nc, dist + 1]); }
-      }
-    }
-    queue = next;
-  }
-  return -1;
-}
+// Shared with server.js so the two can never disagree
+// about which levels are solvable.
+const { slideInGrid, bfsSolve } = require('./solver');
 
 // ── Level generation ──────────────────────────
 // Strategy:

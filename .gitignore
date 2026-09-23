@@ -4,3 +4,4 @@ puzzle.db-shm
 puzzle.db-wal
 *.db-journal
 .env
+.DS_Store

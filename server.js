@@ -3,12 +3,48 @@
 // ─────────────────────────────────────────────
 const express = require('express');
 const path    = require('path');
+const fs      = require('fs');
 const db      = require('./db');
+const { solveLevel } = require('./solver');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '8kb' }));
+
+// ─────────────────────────────────────────────
+//  LEVEL INDEX
+//  Solved once, held in memory. The browser gets sizes
+//  and move counts, never the maps: shipping thousands
+//  of mazes is both the slow part of a page load and a
+//  way to read a level before playing it.
+// ─────────────────────────────────────────────
+let levelIndex = null;
+
+function buildIndex() {
+  const started = Date.now();
+  const rows    = db.getAllLevels();
+  const meta    = [];
+  const maps    = new Map();
+  const unplayable = [];
+
+  for (const lvl of rows) {
+    const opt = solveLevel(lvl.map);
+    if (opt === -1) { unplayable.push(lvl.id); continue; }
+    meta.push({ id: lvl.id, rows: lvl.map.length, cols: lvl.map[0].length, opt });
+    maps.set(lvl.id, lvl.map);
+  }
+
+  levelIndex = { meta, maps, unplayable, count: rows.length };
+  console.log(`Indexed ${meta.length} playable levels of ${rows.length} in ${Date.now() - started}ms.`);
+  return levelIndex;
+}
+
+// Rebuild when the generator has added levels behind our back.
+function getIndex() {
+  if (!levelIndex || levelIndex.count !== db.countLevels()) return buildIndex();
+  return levelIndex;
+}
 
 // ─────────────────────────────────────────────
 //  PRESENCE  (in-memory, deliberately not in SQLite)
@@ -59,11 +95,11 @@ function noStore(res) {
 }
 
 // ── GET /api/levels ──────────────────────────
-// Returns all levels (id, name, map, order_index).
-// The client runs BFS to filter unsolvable levels and
-// compute optimal move counts.
+// Metadata only — no maps. 2762 levels are 632 KB with
+// their maps and 94 KB without them.
 app.get('/api/levels', (req, res) => {
-  noStore(res).json(db.getAllLevels());
+  const idx = getIndex();
+  noStore(res).json({ levels: idx.meta, unplayable: idx.unplayable });
 });
 
 // ── GET /api/levels/stats ────────────────────
@@ -72,6 +108,27 @@ app.get('/api/levels', (req, res) => {
 // so "stats" can never be captured as an id.
 app.get('/api/levels/stats', (req, res) => {
   noStore(res).json(db.getAllLevelStats());
+});
+
+// ── GET /api/levels/:id ──────────────────────
+// One level's map, fetched when the player enters it.
+app.get('/api/levels/:id', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ error: 'Invalid level id' });
+
+  const idx = getIndex();
+  const map = idx.maps.get(id);
+  // An unplayable level is never handed out, so the client cannot render
+  // a board that has no solution.
+  if (!map) return res.status(404).json({ error: 'Level not found' });
+
+  const level = db.getLevelById(id);
+  noStore(res).json({
+    id,
+    name: level ? level.name : `Level ${id}`,
+    order_index: level ? level.order_index : 0,
+    map,
+  });
 });
 
 // ── GET /api/levels/:id/leaderboard ──────────
@@ -173,10 +230,49 @@ app.post('/api/completions', (req, res) => {
   res.json({ completionId, rank, top, stats });
 });
 
+// ─────────────────────────────────────────────
+//  INDEX PAGE
+//  The asset URLs carry a stamp derived from the files
+//  themselves, so a deploy always reaches the browser.
+//  A CDN in front of this may override Cache-Control on
+//  .css and .js (Cloudflare's Browser Cache TTL does,
+//  with 4 hours by default) — a changing URL is the only
+//  thing it cannot ignore.
+// ─────────────────────────────────────────────
+const PUBLIC_DIR = path.join(__dirname, 'public');
+let htmlCache = null;
+
+function assetStamp() {
+  let sum = 0;
+  for (const file of ['style.css', 'main.js']) {
+    try {
+      const st = fs.statSync(path.join(PUBLIC_DIR, file));
+      sum += Math.round(st.mtimeMs) + st.size;
+    } catch { /* missing file: the stamp just does not move */ }
+  }
+  return sum.toString(36);
+}
+
+function indexHtml() {
+  const stamp = assetStamp();
+  if (htmlCache && htmlCache.stamp === stamp) return htmlCache.body;
+
+  const raw  = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
+  const body = raw.replace(/(href|src)="(style\.css|main\.js)(\?v=[^"]*)?"/g,
+                           `$1="$2?v=${stamp}"`);
+  htmlCache = { stamp, body };
+  return body;
+}
+
+app.get(['/', '/index.html'], (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.type('html').send(indexHtml());
+});
+
 // no-cache, not no-store: the browser still revalidates cheaply with the
 // ETag, but it can never keep a stale client after a deploy. Two people on
 // one shared link must be running the same build.
-app.use(express.static(path.join(__dirname, 'public'), {
+app.use(express.static(PUBLIC_DIR, {
   etag: true,
   maxAge: 0,
   setHeaders: res => res.setHeader('Cache-Control', 'no-cache'),

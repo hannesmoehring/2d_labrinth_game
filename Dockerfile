@@ -10,7 +10,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 # Copy application source
-COPY server.js db.js generate-levels.js entrypoint.sh ./
+COPY server.js db.js solver.js generate-levels.js entrypoint.sh ./
 COPY public/ public/
 
 RUN chmod +x entrypoint.sh

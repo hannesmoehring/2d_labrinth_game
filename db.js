@@ -169,6 +169,8 @@ const stmts = {
     WHERE level_id = ?
   `),
 
+  countLevels: db.prepare('SELECT COUNT(*) AS n FROM levels'),
+
   getLevelById: db.prepare(`
     SELECT id, name, map, order_index
     FROM levels WHERE id = ?
@@ -232,6 +234,10 @@ module.exports = {
 
   getAllLevelStats() {
     return stmts.getAllLevelStats.all();
+  },
+
+  countLevels() {
+    return stmts.countLevels.get().n;
   },
 
   // Returns the new completion's rowid

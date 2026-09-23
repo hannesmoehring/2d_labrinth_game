@@ -524,3 +524,28 @@ table.leaderboard td:nth-child(5) { text-align: right; color: #606080; font-size
 
 #share-slot:empty,
 #share-slot-browse:empty { display: none; }
+
+/* ── Pager ──
+   2762 cards in one grid is what stalled the page. */
+#pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 8px 0 4px;
+}
+
+.pager-state {
+  font-size: 0.78rem;
+  color: #606080;
+  font-variant-numeric: tabular-nums;
+}
+
+.ghost-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  border-color: #333;
+  color: #555;
+}
+.ghost-btn:disabled:hover { border-color: #333; color: #555; }
