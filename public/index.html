@@ -2,43 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Sliding Puzzle</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%231a1a2e'/%3E%3Crect x='3' y='3' width='5' height='5' rx='1' fill='%23e040fb'/%3E%3Crect x='9' y='9' width='4' height='4' rx='1' fill='%2300bcd4'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="ui-bar">
-    <span id="level-label">Level 1</span>
-    <span id="timer">0.0s</span>
-    <span id="move-counter">Moves: 0</span>
-    <button id="restart-btn" title="Reset level (Space)">Reset</button>
-  </div>
+  <!-- ── SCREEN 1: BROWSE ─────────────────────────── -->
+  <main id="screen-browse">
+    <header id="browse-head">
+      <h1 id="browse-title">SLIDE</h1>
+      <div id="browse-actions">
+        <input id="jump-input" type="text" inputmode="numeric" autocomplete="off"
+               maxlength="16" placeholder="Jump to #">
+        <button id="btn-random" class="ghost-btn">Random</button>
+      </div>
+    </header>
 
-  <div id="difficulty-filter">
-    <button class="diff-btn active" data-diff="All">All</button>
-    <button class="diff-btn diff-easy"   data-diff="Easy">Easy</button>
-    <button class="diff-btn diff-medium" data-diff="Medium">Medium</button>
-    <button class="diff-btn diff-hard"   data-diff="Hard">Hard</button>
-    <button class="diff-btn diff-expert" data-diff="Expert">Expert</button>
-  </div>
+    <div id="difficulty-filter">
+      <button class="diff-btn active" data-diff="All">All</button>
+      <button class="diff-btn diff-easy"   data-diff="Easy">Easy</button>
+      <button class="diff-btn diff-medium" data-diff="Medium">Medium</button>
+      <button class="diff-btn diff-hard"   data-diff="Hard">Hard</button>
+      <button class="diff-btn diff-expert" data-diff="Expert">Expert</button>
+    </div>
 
-  <div id="level-details">
-    <span id="detail-dims"></span>
-    <span id="detail-optimal"></span>
-    <span id="detail-difficulty"></span>
-  </div>
+    <div id="browse-tools">
+      <label id="sort-label" for="sort-select">Sort</label>
+      <select id="sort-select">
+        <option value="number" selected>Number</option>
+        <option value="plays">Most played</option>
+        <option value="best">Fastest time</option>
+        <option value="unplayed">Not played by you</option>
+      </select>
+      <span id="browse-count"></span>
+    </div>
 
-  <div id="board-wrapper">
-    <div id="board"></div>
-  </div>
+    <div id="share-slot-browse"></div>
+    <p id="browse-notice" class="hidden"></p>
+    <div id="level-grid"></div>
+    <p id="browse-empty" class="hidden">No level matches.</p>
+  </main>
 
-  <!-- Overlay: name entry → leaderboard (content built by JS) -->
+  <!-- ── SCREEN 2: PLAY ───────────────────────────── -->
+  <main id="screen-play" class="hidden">
+    <div id="ui-bar">
+      <button id="back-btn" class="ghost-btn" title="All levels (Esc)">&lsaquo; All levels</button>
+      <span id="level-label">#&mdash;</span>
+      <span id="timer">0.0s</span>
+      <span id="move-counter">Moves: 0</span>
+      <button id="restart-btn" title="Reset level (R)">Reset</button>
+      <button id="share-btn" class="ghost-btn" title="Copy link to this level">Share</button>
+    </div>
+
+    <div id="level-details">
+      <span id="detail-dims"></span>
+      <span id="detail-optimal"></span>
+      <span id="detail-difficulty"></span>
+      <span id="detail-best"></span>
+      <span id="detail-live" class="hidden"></span>
+    </div>
+
+    <div id="board-wrapper">
+      <div id="board"></div>
+    </div>
+
+    <div id="share-slot"></div>
+
+    <div id="dpad" class="hidden">
+      <button class="dpad-btn dpad-up"    data-dr="-1" data-dc="0"  aria-label="Up">&#9650;</button>
+      <button class="dpad-btn dpad-left"  data-dr="0"  data-dc="-1" aria-label="Left">&#9664;</button>
+      <button class="dpad-btn dpad-down"  data-dr="1"  data-dc="0"  aria-label="Down">&#9660;</button>
+      <button class="dpad-btn dpad-right" data-dr="0"  data-dc="1"  aria-label="Right">&#9654;</button>
+    </div>
+
+    <div id="controls-hint">Swipe or WASD / Arrows to move &nbsp;·&nbsp; R to reset &nbsp;·&nbsp; Esc for all levels</div>
+  </main>
+
+  <!-- Overlay: ready gate → name entry → leaderboard (content built by JS) -->
   <div id="overlay" class="hidden">
     <div id="overlay-box"></div>
   </div>
 
-  <div id="controls-hint">WASD / Arrow keys to move &nbsp;·&nbsp; Space to reset</div>
-
-  <script src="main.js"></script>
+  <script src="main.js?v=2"></script>
 </body>
 </html>

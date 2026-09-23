@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 User=www-data
 WorkingDirectory=/opt/sliding-puzzle
+ExecStartPre=/usr/bin/node generate-levels.js 100 --if-empty
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5

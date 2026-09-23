@@ -9,6 +9,10 @@ const db = new Database(process.env.DB_PATH ?? path.join(__dirname, 'puzzle.db')
 // WAL mode: faster reads under concurrent access
 db.pragma('journal_mode = WAL');
 
+// The levels/completions foreign key is declared below but better-sqlite3
+// leaves enforcement off by default, so a bogus level_id would insert silently.
+db.pragma('foreign_keys = ON');
+
 // ── Schema ──────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS levels (
@@ -165,6 +169,30 @@ const stmts = {
     WHERE level_id = ?
   `),
 
+  getLevelById: db.prepare(`
+    SELECT id, name, map, order_index
+    FROM levels WHERE id = ?
+  `),
+
+  levelExists: db.prepare(`
+    SELECT 1 AS ok FROM levels WHERE id = ?
+  `),
+
+  // One row per level that has been played at least once.
+  // Feeds every card on the browse grid in a single request.
+  getAllLevelStats: db.prepare(`
+    SELECT c.level_id,
+           COUNT(*)            AS plays,
+           MIN(c.time_ms)      AS best_time,
+           MIN(c.moves)        AS best_moves,
+           MAX(c.completed_at) AS last_at,
+           (SELECT player_name FROM completions
+             WHERE level_id = c.level_id
+             ORDER BY time_ms ASC, id ASC LIMIT 1) AS best_name
+    FROM completions c
+    GROUP BY c.level_id
+  `),
+
   insertCompletion: db.prepare(`
     INSERT INTO completions (level_id, player_name, time_ms, moves)
     VALUES (?, ?, ?, ?)
@@ -191,6 +219,19 @@ module.exports = {
 
   getStats(levelId) {
     return stmts.getStats.get(levelId);
+  },
+
+  getLevelById(levelId) {
+    const row = stmts.getLevelById.get(levelId);
+    return row ? { ...row, map: JSON.parse(row.map) } : null;
+  },
+
+  levelExists(levelId) {
+    return !!stmts.levelExists.get(levelId);
+  },
+
+  getAllLevelStats() {
+    return stmts.getAllLevelStats.all();
   },
 
   // Returns the new completion's rowid
