@@ -102,6 +102,25 @@ app.get('/api/levels', (req, res) => {
   noStore(res).json({ levels: idx.meta, unplayable: idx.unplayable });
 });
 
+// ── GET /api/leaderboard ─────────────────────
+// Player ranking for one time window. A crown is a level
+// whose fastest run inside that window belongs to you.
+const WINDOWS = {
+  '24h': '-1 day',
+  '7d':  '-7 days',
+  '30d': '-30 days',
+  'all': '-1000 years',
+};
+
+app.get('/api/leaderboard', (req, res) => {
+  const key = typeof req.query.window === 'string' ? req.query.window : '30d';
+  const modifier = WINDOWS[key];
+  if (!modifier) return res.status(400).json({ error: 'Unknown window' });
+
+  const { players, totals } = db.getPlayerRanking(modifier);
+  noStore(res).json({ window: key, players, totals });
+});
+
 // ── GET /api/levels/stats ────────────────────
 // One row per played level. Feeds all browse-grid cards
 // in a single request. Registered before /api/levels/:id

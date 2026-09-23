@@ -16,6 +16,7 @@
         <input id="jump-input" type="text" inputmode="numeric" autocomplete="off"
                maxlength="16" placeholder="Jump to #">
         <button id="btn-random" class="ghost-btn">Random</button>
+        <button id="btn-top" class="ghost-btn">&#9733; Leaderboard</button>
       </div>
     </header>
 
@@ -43,6 +44,28 @@
     <div id="level-grid"></div>
     <p id="browse-empty" class="hidden">No level matches.</p>
     <div id="pager" class="hidden"></div>
+  </main>
+
+  <!-- ── SCREEN 3: LEADERBOARD ────────────────────── -->
+  <main id="screen-top" class="hidden">
+    <header id="top-head">
+      <button id="top-back" class="ghost-btn">&lsaquo; All levels</button>
+      <h1 id="top-title">LEADERBOARD</h1>
+      <span id="top-spacer"></span>
+    </header>
+
+    <div id="top-windows">
+      <button class="win-btn" data-window="24h">24h</button>
+      <button class="win-btn" data-window="7d">7 days</button>
+      <button class="win-btn active" data-window="30d">30 days</button>
+      <button class="win-btn" data-window="all">All time</button>
+    </div>
+
+    <div id="top-totals"></div>
+    <div id="top-podium"></div>
+    <div id="top-table"></div>
+    <p id="top-empty" class="hidden">Nobody has finished a level in this window yet.</p>
+    <p id="top-legend">&#9733; a level whose fastest run in this window is yours</p>
   </main>
 
   <!-- ── SCREEN 2: PLAY ───────────────────────────── -->

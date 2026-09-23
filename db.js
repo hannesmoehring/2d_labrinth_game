@@ -171,6 +171,49 @@ const stmts = {
 
   countLevels: db.prepare('SELECT COUNT(*) AS n FROM levels'),
 
+  // ── Global leaderboard ──
+  // Every query takes an SQLite date modifier ('-30 days', '-1000 years'
+  // for all time). completed_at is UTC text in a sortable format, and
+  // datetime('now') is UTC too, so a plain string compare is correct.
+  playerTotals: db.prepare(`
+    SELECT player_name,
+           COUNT(*)                      AS runs,
+           COUNT(DISTINCT level_id)      AS levels,
+           MIN(time_ms)                  AS best_time,
+           CAST(AVG(time_ms) AS INTEGER) AS avg_time,
+           SUM(time_ms)                  AS total_time,
+           MIN(moves)                    AS best_moves,
+           MAX(completed_at)             AS last_at
+    FROM completions
+    WHERE completed_at >= datetime('now', ?)
+    GROUP BY player_name
+  `),
+
+  // A crown is a level whose fastest run in the window is yours.
+  playerCrowns: db.prepare(`
+    SELECT player_name, COUNT(*) AS crowns
+    FROM (
+      SELECT player_name,
+             ROW_NUMBER() OVER (
+               PARTITION BY level_id ORDER BY time_ms ASC, id ASC
+             ) AS rn
+      FROM completions
+      WHERE completed_at >= datetime('now', ?)
+    )
+    WHERE rn = 1
+    GROUP BY player_name
+  `),
+
+  windowTotals: db.prepare(`
+    SELECT COUNT(*)                    AS runs,
+           COUNT(DISTINCT player_name) AS players,
+           COUNT(DISTINCT level_id)    AS levels,
+           MIN(time_ms)                AS best_time,
+           SUM(time_ms)                AS total_time
+    FROM completions
+    WHERE completed_at >= datetime('now', ?)
+  `),
+
   getLevelById: db.prepare(`
     SELECT id, name, map, order_index
     FROM levels WHERE id = ?
@@ -238,6 +281,23 @@ module.exports = {
 
   countLevels() {
     return stmts.countLevels.get().n;
+  },
+
+  // Ranked players for one time window, crowns folded in.
+  getPlayerRanking(modifier, limit = 100) {
+    const crowns = new Map(
+      stmts.playerCrowns.all(modifier).map(r => [r.player_name, r.crowns]));
+
+    const players = stmts.playerTotals.all(modifier)
+      .map(r => ({ ...r, crowns: crowns.get(r.player_name) ?? 0 }))
+      .sort((a, b) =>
+        (b.crowns - a.crowns) ||
+        (b.levels - a.levels) ||
+        (b.runs   - a.runs)   ||
+        (a.best_time - b.best_time) ||
+        a.player_name.localeCompare(b.player_name));
+
+    return { players: players.slice(0, limit), totals: stmts.windowTotals.get(modifier) };
   },
 
   // Returns the new completion's rowid

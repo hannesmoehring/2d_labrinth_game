@@ -128,6 +128,8 @@ let activeDifficulty = null;  // null = All
 let activeSort       = 'number';
 let activeScreen     = 'browse';
 let page             = 0;     // browse grid page
+let topWindow        = '30d';  // leaderboard time window
+let topToken         = 0;      // drops a slow leaderboard fetch the player left behind
 const PAGE_SIZE      = 120;   // 2762 cards at once is what broke the page
 let navToken         = 0;     // bumped on every enterLevel; async callbacks compare against it
 
@@ -265,16 +267,19 @@ function shareUrl(id) { return `${baseUrl()}#/level/${id}`; }
 function route() {
   const m = /^#\/level\/(\d+)$/.exec(location.hash);
   if (m) { enterLevel(Number(m[1])); return; }
+  if (location.hash === '#/top') { goTop(); return; }
   goBrowse();
 }
 
 function showScreen(name) {
   activeScreen = name;
   document.getElementById('screen-browse').classList.toggle('hidden', name !== 'browse');
-  document.getElementById('screen-play').classList.toggle('hidden', name !== 'play');
+  document.getElementById('screen-play').classList.toggle('hidden',   name !== 'play');
+  document.getElementById('screen-top').classList.toggle('hidden',    name !== 'top');
 
   if (name === 'browse') { stopPresence(); startBrowsePoll(); }
   else                   { stopBrowsePoll(); }
+  if (name === 'top') stopPresence();
 }
 
 let pendingNotice    = null;
@@ -296,7 +301,7 @@ function goBrowse(notice) {
   // not route back through goBrowse and erase the notice) and it never
   // reloads the page when a shared link arrived with a tracking query.
   // A first visit with no level hash keeps its clean URL.
-  if (/^#\/level\//.test(location.hash)) {
+  if (/^#\/(level\/|top$)/.test(location.hash)) {
     try { history.replaceState(null, '', baseUrl() + '#/'); }
     catch { location.hash = '#/'; }
   }
@@ -318,6 +323,126 @@ function goBrowse(notice) {
     noticeEl.textContent = '';
     noticeEl.classList.add('hidden');
   }
+}
+
+// ─────────────────────────────────────────────
+//  LEADERBOARD SCREEN
+//  Who is fastest, over a window you choose. A crown is
+//  a level whose fastest run inside that window is yours,
+//  so the 30-day table and the all-time table tell two
+//  different stories.
+// ─────────────────────────────────────────────
+function goTop() {
+  stopPresence();
+  resetTimer();
+  hideOverlay();
+  clearShareFallback();
+  state.levelId = null;
+  state.started = false;
+  navToken++;
+  state.navToken = navToken;
+
+  if (location.hash !== '#/top') {
+    try { history.replaceState(null, '', baseUrl() + '#/top'); } catch { /* keep the URL */ }
+  }
+
+  showScreen('top');
+  document.querySelectorAll('.win-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.window === topWindow));
+  loadTop();
+}
+
+async function loadTop() {
+  const token = ++topToken;
+  const table = document.getElementById('top-table');
+  table.innerHTML = '<p class="overlay-meta">Loading…</p>';
+
+  let data = null;
+  try {
+    const res = await fetch(`/api/leaderboard?window=${encodeURIComponent(topWindow)}`);
+    if (res.ok) data = await res.json();
+  } catch { /* handled below */ }
+
+  if (token !== topToken || activeScreen !== 'top') return;
+  if (!data) {
+    table.innerHTML = '<p class="overlay-error">Could not reach the server.</p>';
+    document.getElementById('top-podium').innerHTML = '';
+    document.getElementById('top-totals').innerHTML = '';
+    return;
+  }
+  renderTop(data);
+}
+
+function renderTop({ players, totals }) {
+  const me      = (lsGet('playerName') || '').trim();
+  const podium  = document.getElementById('top-podium');
+  const table   = document.getElementById('top-table');
+  const empty   = document.getElementById('top-empty');
+  const legend  = document.getElementById('top-legend');
+
+  document.getElementById('top-totals').innerHTML = `
+    <span><strong>${totals.players ?? 0}</strong> player${totals.players === 1 ? '' : 's'}</span>
+    <span><strong>${totals.runs ?? 0}</strong> run${totals.runs === 1 ? '' : 's'}</span>
+    <span><strong>${totals.levels ?? 0}</strong> level${totals.levels === 1 ? '' : 's'} played</span>
+    <span>fastest <strong>${formatTime(totals.best_time)}</strong></span>
+  `;
+
+  if (!players.length) {
+    podium.innerHTML = '';
+    table.innerHTML  = '';
+    empty.classList.remove('hidden');
+    legend.classList.add('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  legend.classList.remove('hidden');
+
+  // Podium: second, first, third — so the winner stands in the middle.
+  const order = [1, 0, 2];
+  podium.innerHTML = order
+    .filter(i => players[i])
+    .map(i => {
+      const p = players[i];
+      const isMe = me && p.player_name === me;
+      return `
+        <article class="podium p${i + 1}${isMe ? ' me' : ''}">
+          <span class="podium-rank">${['FIRST', 'SECOND', 'THIRD'][i]}</span>
+          <span class="podium-name">${escapeHtml(p.player_name)}</span>
+          <span class="podium-crowns">${p.crowns}</span>
+          <span class="podium-crowns-label">&#9733; CROWNS</span>
+          <span class="podium-meta">${p.levels} level${p.levels === 1 ? '' : 's'} · ${p.runs} run${p.runs === 1 ? '' : 's'}</span>
+          <span class="podium-meta">best ${formatTime(p.best_time)}</span>
+        </article>
+      `;
+    }).join('');
+
+  const rows = players.map((p, i) => {
+    const isMe = me && p.player_name === me;
+    return `
+      <tr class="${isMe ? 'me ' : ''}r${i + 1}">
+        <td>${i + 1}</td>
+        <td>${escapeHtml(p.player_name)}</td>
+        <td class="rank-crowns">${p.crowns}</td>
+        <td>${p.levels}</td>
+        <td>${p.runs}</td>
+        <td>${formatTime(p.best_time)}</td>
+        <td>${formatTime(p.avg_time)}</td>
+        <td>${escapeHtml(formatAgo(p.last_at))}</td>
+      </tr>
+    `;
+  }).join('');
+
+  table.innerHTML = `
+    <table class="ranking">
+      <thead>
+        <tr>
+          <th>#</th><th>Player</th><th>&#9733;</th><th>Levels</th>
+          <th>Runs</th><th>Best</th><th>Avg</th><th>Last</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
 }
 
 function enterCard(el) {
@@ -1275,6 +1400,16 @@ document.addEventListener('keydown', e => {
   }
   if (active && TEXT_INPUT_IDS.includes(active.id)) return;
 
+  if (activeScreen === 'top') {
+    if (e.key === 'Escape') { goBrowse(); e.preventDefault(); }
+    const pick = { '1': '24h', '2': '7d', '3': '30d', '4': 'all' }[e.key];
+    if (pick) {
+      const btn = document.querySelector(`.win-btn[data-window="${pick}"]`);
+      if (btn) { btn.click(); e.preventDefault(); }
+    }
+    return;
+  }
+
   if (activeScreen !== 'play') {
     // Browse: let the arrows scroll the grid.
     if (e.key === 'Enter' && active && active.classList.contains('level-card')) {
@@ -1351,6 +1486,19 @@ dpad.addEventListener('click', e => {
 document.getElementById('restart-btn').addEventListener('click', resetLevel);
 document.getElementById('back-btn').addEventListener('click', () => goBrowse());
 document.getElementById('share-btn').addEventListener('click', e => shareLevel(state.levelId, e.currentTarget));
+
+document.getElementById('btn-top').addEventListener('click', () => { location.hash = '#/top'; });
+document.getElementById('top-back').addEventListener('click', () => goBrowse());
+
+document.querySelectorAll('.win-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    topWindow = btn.dataset.window;
+    lsSet('slide:topwindow', topWindow);
+    document.querySelectorAll('.win-btn').forEach(b =>
+      b.classList.toggle('active', b === btn));
+    loadTop();
+  });
+});
 
 document.getElementById('btn-random').addEventListener('click', () => {
   if (VIEW.length === 0) return;
@@ -1434,6 +1582,9 @@ async function boot() {
 
   setupFilterButtons();
 
+  const savedWindow = lsGet('slide:topwindow');
+  if (savedWindow && ['24h', '7d', '30d', 'all'].includes(savedWindow)) topWindow = savedWindow;
+
   const saved = lsGet('slide:filter');
   if (saved) {
     activeDifficulty = saved === 'All' ? null : saved;
@@ -1473,7 +1624,7 @@ async function autoSolve() {
 window.__slide = {
   state, BY_ID, MAPS, loadMap,
   enterLevel, move, tryMove, solveLevel, solvePath, autoSolve,
-  startRun, goBrowse, shareUrl, resetLevel,
+  startRun, goBrowse, goTop, loadTop, shareUrl, resetLevel,
   // Getters, because these three are reassigned, not mutated.
   get levels() { return LEVELS; },
   get stats()  { return STATS; },
