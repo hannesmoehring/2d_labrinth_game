@@ -1,20 +1,31 @@
-FROM node:22-alpine
-
-# better-sqlite3 compiles a native addon — needs Python + build tools
-RUN apk add --no-cache python3 make g++
+# ── Build: Node from pixi.lock, npm dependencies from package-lock.json ──
+FROM ghcr.io/prefix-dev/pixi:0.81.0-bookworm-slim AS build
 
 WORKDIR /app
 
-# Install dependencies first (layer-cached unless package.json changes)
+# Node toolchain first (layer-cached unless the pixi manifest or lock changes)
+COPY pixi.toml pixi.lock ./
+RUN pixi install --locked --environment default \
+ && pixi install --locked --environment build
+
+# better-sqlite3 compiles its native addon with the build env's compilers
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN pixi run --locked --environment build npm ci --omit=dev
+
+# ── Runtime: pixi and the default env, without the compilers ──
+FROM ghcr.io/prefix-dev/pixi:0.81.0-bookworm-slim
+
+WORKDIR /app
+
+COPY pixi.toml pixi.lock ./
+COPY --from=build /app/.pixi/envs/default .pixi/envs/default
+COPY --from=build /app/node_modules node_modules
 
 # Copy application source
-COPY server.js db.js solver.js generate-levels.js entrypoint.sh ./
+COPY server.js db.js solver.js generate-levels.js ./
 COPY public/ public/
-
-RUN chmod +x entrypoint.sh
 
 EXPOSE 3000
 
-CMD ["sh", "entrypoint.sh"]
+# --as-is: use the env baked into the image; never re-solve or download at startup
+CMD ["pixi", "run", "--as-is", "start"]

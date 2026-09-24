@@ -1,0 +1,56 @@
+[workspace]
+name = "sliding-puzzle"
+version = "1.0.0"
+description = "Browser-based sliding logic puzzle game with leaderboard"
+channels = ["conda-forge"]
+# linux-* are what the Docker image resolves against (amd64 and arm64 hosts).
+platforms = ["osx-arm64", "linux-64", "linux-aarch64"]
+
+[dependencies]
+# Node comes from conda-forge; the npm packages themselves stay in package.json.
+nodejs = "22.*"
+
+# better-sqlite3 9.x ships no prebuilt addon for Node 22, so the Docker build
+# compiles it. Kept out of `default` so the runtime image carries no compilers.
+[feature.build]
+platforms = ["linux-64", "linux-aarch64"]
+
+[feature.build.dependencies]
+binutils = "*"  # unprefixed `ar`, which node-gyp's Makefile calls
+cxx-compiler = "*"
+make = "*"
+python = "*"
+
+[environments]
+default = { solve-group = "default" }
+build = { features = ["build"], solve-group = "default" }
+
+# `start` and `generate-levels` deliberately don't depend on `install`: the
+# Docker image runs them too, and there node_modules is baked in at build time.
+# `npm ci` would wipe it and the runtime image has no compilers to rebuild it.
+[tasks.install]
+description = "Install npm dependencies from package-lock.json"
+cmd = "npm ci"
+inputs = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks.start]
+description = "Run the game server on http://localhost:3000"
+cmd = "node server.js"
+
+[tasks.generate-levels]
+description = "Append levels to the database, e.g. `pixi run generate-levels 30 --dry-run`"
+cmd = "node generate-levels.js"
+
+# ── Deployment (Docker Compose) ───────────────
+[tasks.deploy]
+description = "Build the image and (re)start the container"
+cmd = "docker compose up -d --build"
+
+[tasks.logs]
+description = "Follow the container's logs"
+cmd = "docker compose logs -f"
+
+[tasks.stop]
+description = "Stop and remove the container (the database volume is kept)"
+cmd = "docker compose down"

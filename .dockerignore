@@ -5,4 +5,4 @@ puzzle.db-wal
 *.db-journal
 .git/
 .env
-sliding-puzzle.service
+.pixi/

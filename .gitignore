@@ -5,3 +5,7 @@ puzzle.db-wal
 *.db-journal
 .env
 .DS_Store
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
