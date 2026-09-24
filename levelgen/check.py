@@ -4,7 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor
 
 from .analysis import analyse, replay
-from .board import Board
+from .board import Board, floor_region
 
 
 def check_level(level: dict) -> str | None:
@@ -13,6 +13,8 @@ def check_level(level: dict) -> str | None:
         board = Board.parse(level["map"])
     except ValueError as err:
         return f"bad map: {err}"
+    if not (floor_region(board.walls, board.cols, board.start) | board.walls).all():
+        return "part of the floor is a compartment the player cannot reach"
     if not replay(board, level["solution"]):
         return "stored solution does not reach the goal"
     if len(level["solution"].split()) != level["opt"]:

@@ -5,7 +5,7 @@ import random
 
 import numpy as np
 
-from .board import Board
+from .board import Board, floor_region
 from .tiers import Tier
 
 OPEN_GOAL_SHARE = 0.5   # of tiers that allow it, goals placed with no wall beside them
@@ -38,24 +38,26 @@ def _is_open(walls: np.ndarray, cols: int, cell: int) -> bool:
     return not any(walls[cell + s] for s in (-cols, cols, -1, 1))
 
 
-def _seal_pockets(walls: np.ndarray, cols: int, pieces: list[int]) -> np.ndarray:
-    """Wall in floor that no piece can ever enter; it is only visual noise."""
-    reached = np.zeros_like(walls)
-    stack = list(pieces)
-    reached[stack] = True
-    while stack:
-        cell = stack.pop()
-        for s in (-cols, cols, -1, 1):
-            nxt = cell + s
-            if not walls[nxt] and not reached[nxt]:
-                reached[nxt] = True
-                stack.append(nxt)
-    return walls | ~reached
+def _keep_largest_region(walls: np.ndarray, cols: int) -> np.ndarray:
+    """Wall in all floor outside the largest orthogonally connected region.
+
+    A pocket meeting the rest only at a corner is a separate compartment:
+    a block placed there could never touch the player. With one region left,
+    every piece and the goal share it.
+    """
+    best = np.zeros_like(walls)
+    unseen = ~walls
+    while unseen.any():
+        region = floor_region(walls, cols, int(np.argmax(unseen)))
+        unseen &= ~region
+        if region.sum() > best.sum():
+            best = region
+    return ~best
 
 
 def random_board(tier: Tier, rng: random.Random) -> Board | None:
-    walls = random_walls(tier, rng)
     cols = tier.cols
+    walls = _keep_largest_region(random_walls(tier, rng), cols)
     floor = [int(c) for c in np.flatnonzero(~walls)]
     if len(floor) < tier.blocks + 2 + 8:
         return None
@@ -74,7 +76,4 @@ def random_board(tier: Tier, rng: random.Random) -> Board | None:
 
     rest = [c for c in floor if c not in (start, goal)]
     blocks = tuple(rng.sample(rest, tier.blocks))
-    walls = _seal_pockets(walls, cols, [start, *blocks])
-    if walls[goal]:
-        return None
     return Board(tier.rows, cols, walls, start, goal, blocks)

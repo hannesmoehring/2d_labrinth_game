@@ -78,6 +78,29 @@ class Board:
         return ["".join(row) for row in grid]
 
 
+def floor_region(walls: np.ndarray, cols: int, cell: int) -> np.ndarray:
+    """Mask of the floor cells joined to ``cell`` by orthogonal steps.
+
+    Pieces never move diagonally, so floor that touches this region only at
+    a corner is not part of it.
+    """
+    rows = walls.size // cols
+    region = np.zeros_like(walls)
+    region[cell] = True
+    stack = [cell]
+    while stack:
+        r, c = divmod(stack.pop(), cols)
+        for dr, dc in DIR_DELTAS:
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < rows and 0 <= nc < cols):
+                continue
+            nxt = nr * cols + nc
+            if not walls[nxt] and not region[nxt]:
+                region[nxt] = True
+                stack.append(nxt)
+    return region
+
+
 def slide(board: Board, positions: list[int], index: int, d: int) -> int:
     """Cell where piece ``index`` stops when pushed in direction ``d``.
 
