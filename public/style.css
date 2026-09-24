@@ -648,8 +648,14 @@ table.leaderboard td:nth-child(5) { text-align: right; color: #606080; font-size
   #top-title  { font-size: 1.15rem; letter-spacing: 0.16em; }
 }
 
-/* ── Window tabs ── */
-#top-windows {
+/* ── Period and difficulty tabs ── */
+#top-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#top-windows, #top-diffs {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -673,6 +679,18 @@ table.leaderboard td:nth-child(5) { text-align: right; color: #606080; font-size
   color: #00e5ff;
   border-color: #00e5ff;
   background: #00e5ff18;
+}
+
+/* The active difficulty tab takes that difficulty's colour. */
+#top-diffs .win-btn                      { --tone: #00e5ff; }
+#top-diffs .win-btn[data-diff="Easy"]    { --tone: #69f0ae; }
+#top-diffs .win-btn[data-diff="Medium"]  { --tone: #ffeb3b; }
+#top-diffs .win-btn[data-diff="Hard"]    { --tone: #ff9800; }
+#top-diffs .win-btn[data-diff="Expert"]  { --tone: #f44336; }
+#top-diffs .win-btn.active {
+  color: var(--tone);
+  border-color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 10%, transparent);
 }
 
 /* ── Totals strip ── */
@@ -819,6 +837,7 @@ table.ranking tr.me td:nth-child(1) { color: #e040fb; }
 table.ranking tbody tr:hover td   { background: #ffffff08; }
 
 .rank-crowns { color: #ffd54f; font-weight: bold; }
+.rank-over   { color: #a0c4ff; }
 table.ranking tr.me .rank-crowns { color: #ffd54f; }
 
 /* Rank 1-3 keep their medal colour in the table too */
@@ -839,11 +858,11 @@ table.ranking tr.r3 td:nth-child(1) { color: #ff9800; font-weight: bold; }
   text-align: center;
 }
 
-/* Drop the softer columns before the table has to scroll.
-   Best time stays: it is the number players care about. */
+/* Drop the softer columns before the table has to scroll. Moves over
+   optimal and best time stay: they are the numbers players care about. */
 @media (max-width: 620px) {
-  table.ranking th:nth-child(7), table.ranking td:nth-child(7),
-  table.ranking th:nth-child(8), table.ranking td:nth-child(8) { display: none; }
+  table.ranking th:nth-child(8), table.ranking td:nth-child(8),
+  table.ranking th:nth-child(9), table.ranking td:nth-child(9) { display: none; }
 }
 @media (max-width: 420px) {
   table.ranking th:nth-child(5), table.ranking td:nth-child(5) { display: none; }

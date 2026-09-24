@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────
-//  RULES + SOLVER
+//  RULES, SOLVER, DIFFICULTY
 //  One file for the browser (a plain <script>, exposed
 //  as window.Slide) and for Node (server.js and
 //  import-levels.js require it), so the two can never
-//  disagree about how a piece moves.
+//  disagree about how a piece moves or how hard a
+//  level is.
 //
 //  A level has the player (piece 1, 'S' in a map) and up
 //  to three blocks (pieces 2-4, written '2'/'3'/'4').
@@ -147,5 +148,20 @@
     return false;
   }
 
-  return { DIRS, parseLevel, slide, solve, solveLevel, replay };
+  // ── Difficulty ──
+  // The server filters the leaderboard by it and the browser labels cards
+  // with it, so both read it from here. levelgen/scoring.py orders the
+  // level pack by the same score; the thresholds split a generated pack
+  // into rough quarters.
+  const DIFFICULTIES = ['Easy', 'Medium', 'Hard', 'Expert'];
+
+  function difficulty(opt, rows, cols, blocks = 0) {
+    const score = opt + Math.floor((rows * cols) / 25) + 2 * blocks;
+    if (score <= 10) return 'Easy';
+    if (score <= 19) return 'Medium';
+    if (score <= 29) return 'Hard';
+    return 'Expert';
+  }
+
+  return { DIRS, DIFFICULTIES, parseLevel, slide, solve, solveLevel, replay, difficulty };
 });

@@ -4,14 +4,10 @@
 // ─────────────────────────────────────────────
 //  DIFFICULTY
 // ─────────────────────────────────────────────
-// levelgen/scoring.py orders the level pack by the same score; the
-// thresholds split the generated pack into rough quarters.
+// The grading itself is Slide.difficulty, which the server shares.
 function getDifficulty(optimalMoves, rows, cols, blocks = 0) {
-  const score = optimalMoves + Math.floor((rows * cols) / 25) + 2 * blocks;
-  if (score <= 10) return { label: 'Easy',   cssClass: 'diff-easy'   };
-  if (score <= 19) return { label: 'Medium',  cssClass: 'diff-medium' };
-  if (score <= 29) return { label: 'Hard',    cssClass: 'diff-hard'   };
-  return                   { label: 'Expert', cssClass: 'diff-expert' };
+  const label = Slide.difficulty(optimalMoves, rows, cols, blocks);
+  return { label, cssClass: `diff-${label.toLowerCase()}` };
 }
 
 function blocksText(n) {
@@ -37,6 +33,7 @@ let activeSort       = 'number';
 let activeScreen     = 'browse';
 let page             = 0;     // browse grid page
 let topWindow        = '30d';  // leaderboard time window
+let topDifficulty    = 'all';  // leaderboard difficulty, or 'all'
 let topToken         = 0;      // drops a slow leaderboard fetch the player left behind
 const PAGE_SIZE      = 120;   // 2762 cards at once is what broke the page
 let navToken         = 0;     // bumped on every enterLevel; async callbacks compare against it
@@ -251,8 +248,7 @@ function goTop() {
   }
 
   showScreen('top');
-  document.querySelectorAll('.win-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.window === topWindow));
+  markTopFilters();
   loadTop();
 }
 
@@ -263,7 +259,8 @@ async function loadTop() {
 
   let data = null;
   try {
-    const res = await fetch(`/api/leaderboard?window=${encodeURIComponent(topWindow)}`);
+    const query = new URLSearchParams({ window: topWindow, difficulty: topDifficulty });
+    const res   = await fetch(`/api/leaderboard?${query}`);
     if (res.ok) data = await res.json();
   } catch { /* handled below */ }
 
@@ -275,6 +272,20 @@ async function loadTop() {
     return;
   }
   renderTop(data);
+}
+
+function markTopFilters() {
+  document.querySelectorAll('#top-windows .win-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.window === topWindow));
+  document.querySelectorAll('#top-diffs .win-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.diff === topDifficulty));
+}
+
+// Moves beyond the optimum, averaged over runs: "+1.4". A dash when no run
+// in scope is on a level with a known optimum.
+function formatOver(avg) {
+  if (avg == null) return '—';
+  return `${avg < 0 ? '' : '+'}${Number(avg).toFixed(1)}`;
 }
 
 function renderTop({ players, totals }) {
@@ -289,11 +300,15 @@ function renderTop({ players, totals }) {
     <span><strong>${totals.runs ?? 0}</strong> run${totals.runs === 1 ? '' : 's'}</span>
     <span><strong>${totals.levels ?? 0}</strong> level${totals.levels === 1 ? '' : 's'} played</span>
     <span>fastest <strong>${formatTime(totals.best_time)}</strong></span>
+    <span>avg <strong>${formatOver(totals.avg_over)}</strong> over optimal</span>
   `;
 
   if (!players.length) {
     podium.innerHTML = '';
     table.innerHTML  = '';
+    const which = topDifficulty === 'all' ? 'a'
+                : /^[AEIOU]/.test(topDifficulty) ? `an ${topDifficulty}` : `a ${topDifficulty}`;
+    empty.textContent = `Nobody has finished ${which} level in this period yet.`;
     empty.classList.remove('hidden');
     legend.classList.add('hidden');
     return;
@@ -315,7 +330,7 @@ function renderTop({ players, totals }) {
           <span class="podium-crowns">${p.crowns}</span>
           <span class="podium-crowns-label">&#9733; RECORDS</span>
           <span class="podium-meta">${p.levels} level${p.levels === 1 ? '' : 's'} · ${p.runs} run${p.runs === 1 ? '' : 's'}</span>
-          <span class="podium-meta">best ${formatTime(p.best_time)}</span>
+          <span class="podium-meta">${formatOver(p.avg_over)} over opt · best ${formatTime(p.best_time)}</span>
         </article>
       `;
     }).join('');
@@ -329,6 +344,7 @@ function renderTop({ players, totals }) {
         <td class="rank-crowns">${p.crowns}</td>
         <td>${p.levels}</td>
         <td>${p.runs}</td>
+        <td class="rank-over">${formatOver(p.avg_over)}</td>
         <td>${formatTime(p.best_time)}</td>
         <td>${formatTime(p.avg_time)}</td>
         <td>${escapeHtml(formatAgo(p.last_at))}</td>
@@ -342,7 +358,9 @@ function renderTop({ players, totals }) {
         <tr>
           <th>#</th><th>Player</th>
           <th title="Levels where you hold the fastest time of all time">&#9733;</th>
-          <th>Levels</th><th>Runs</th><th>Best</th><th>Avg</th><th>Last</th>
+          <th>Levels</th><th>Runs</th>
+          <th title="Moves beyond the optimal solution, averaged over runs">Over opt</th>
+          <th>Best</th><th>Avg</th><th>Last</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -1467,12 +1485,20 @@ document.getElementById('share-btn').addEventListener('click', e => shareLevel(s
 document.getElementById('btn-top').addEventListener('click', () => { location.hash = '#/top'; });
 document.getElementById('top-back').addEventListener('click', () => goBrowse());
 
-document.querySelectorAll('.win-btn').forEach(btn => {
+document.querySelectorAll('#top-windows .win-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     topWindow = btn.dataset.window;
     lsSet('slide:topwindow', topWindow);
-    document.querySelectorAll('.win-btn').forEach(b =>
-      b.classList.toggle('active', b === btn));
+    markTopFilters();
+    loadTop();
+  });
+});
+
+document.querySelectorAll('#top-diffs .win-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    topDifficulty = btn.dataset.diff;
+    lsSet('slide:topdiff', topDifficulty);
+    markTopFilters();
     loadTop();
   });
 });
@@ -1562,6 +1588,8 @@ async function boot() {
 
   const savedWindow = lsGet('slide:topwindow');
   if (savedWindow && ['24h', '7d', '30d', 'all'].includes(savedWindow)) topWindow = savedWindow;
+  const savedDiff = lsGet('slide:topdiff');
+  if (savedDiff === 'all' || Slide.DIFFICULTIES.includes(savedDiff)) topDifficulty = savedDiff;
 
   const saved = lsGet('slide:filter');
   if (saved) {

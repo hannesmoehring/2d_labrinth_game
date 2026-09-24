@@ -54,11 +54,20 @@
       <span id="top-spacer"></span>
     </header>
 
-    <div id="top-windows">
-      <button class="win-btn" data-window="24h">24h</button>
-      <button class="win-btn" data-window="7d">7 days</button>
-      <button class="win-btn active" data-window="30d">30 days</button>
-      <button class="win-btn" data-window="all">All time</button>
+    <div id="top-filters">
+      <div id="top-windows" role="group" aria-label="Period">
+        <button class="win-btn" data-window="24h">24h</button>
+        <button class="win-btn" data-window="7d">7 days</button>
+        <button class="win-btn active" data-window="30d">30 days</button>
+        <button class="win-btn" data-window="all">All time</button>
+      </div>
+      <div id="top-diffs" role="group" aria-label="Difficulty">
+        <button class="win-btn active" data-diff="all">All levels</button>
+        <button class="win-btn" data-diff="Easy">Easy</button>
+        <button class="win-btn" data-diff="Medium">Medium</button>
+        <button class="win-btn" data-diff="Hard">Hard</button>
+        <button class="win-btn" data-diff="Expert">Expert</button>
+      </div>
     </div>
 
     <div id="top-totals"></div>
@@ -67,7 +76,8 @@
     <p id="top-empty" class="hidden">Nobody has finished a level in this window yet.</p>
     <p id="top-legend">
       &#9733; a level whose fastest time of all time is yours
-      <br><span class="legend-dim">levels, runs and times below cover the selected period</span>
+      <br>over opt: moves beyond the optimal solution, averaged over runs &mdash; +0.0 is perfect play
+      <br><span class="legend-dim">everything follows the selected difficulty; all but &#9733; follow the selected period</span>
     </p>
   </main>
 

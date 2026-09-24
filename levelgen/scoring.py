@@ -5,7 +5,7 @@ from math import log2
 
 
 def difficulty(level: dict) -> int:
-    """Orders the level list. Mirrors getDifficulty() in public/main.js,
+    """Orders the level list. Mirrors difficulty() in public/solver.js,
     which turns the same number into the Easy/Medium/Hard/Expert label."""
     rows, cols = len(level["map"]), len(level["map"][0])
     return level["opt"] + (rows * cols) // 25 + 2 * level["blocks"]

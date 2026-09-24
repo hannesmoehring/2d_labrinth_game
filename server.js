@@ -5,7 +5,7 @@ const express = require('express');
 const path    = require('path');
 const fs      = require('fs');
 const db      = require('./db');
-const { parseLevel, solveLevel } = require('./public/solver');
+const { DIFFICULTIES, difficulty, parseLevel, solveLevel } = require('./public/solver');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -33,20 +33,25 @@ function buildIndex() {
   const rows    = db.getAllLevels();
   const meta    = [];
   const maps    = new Map();
+  const opts    = new Map();
+  const byDifficulty = Object.fromEntries(DIFFICULTIES.map(d => [d, []]));
   const unplayable = [];
 
   for (const lvl of rows) {
     const level = parseLevel(lvl.map);
     const opt   = !level ? -1 : (lvl.opt ?? solveLevel(lvl.map));
     if (opt === -1) { unplayable.push(lvl.id); continue; }
-    meta.push({
-      id: lvl.id, rows: level.rows, cols: level.cols, opt,
-      blocks: level.pieces.length - 1,
-    });
+    // Stored once, so the leaderboard can compare runs with it in SQL.
+    if (lvl.opt == null) db.setLevelOpt(lvl.id, opt);
+
+    const blocks = level.pieces.length - 1;
+    meta.push({ id: lvl.id, rows: level.rows, cols: level.cols, opt, blocks });
     maps.set(lvl.id, lvl.map);
+    opts.set(lvl.id, opt);
+    byDifficulty[difficulty(opt, level.rows, level.cols, blocks)].push(lvl.id);
   }
 
-  levelIndex = { meta, maps, unplayable, signature: db.levelSignature() };
+  levelIndex = { meta, maps, opts, byDifficulty, unplayable, signature: db.levelSignature() };
   console.log(`Indexed ${meta.length} playable levels of ${rows.length} in ${Date.now() - started}ms.`);
   return levelIndex;
 }
@@ -114,8 +119,9 @@ app.get('/api/levels', (req, res) => {
 });
 
 // ── GET /api/leaderboard ─────────────────────
-// Player ranking for one time window. A crown is a level
-// whose fastest run inside that window belongs to you.
+// Player ranking for one time window and, with
+// ?difficulty=Hard, one difficulty. A crown is a level
+// whose fastest run of all time belongs to you.
 const WINDOWS = {
   '24h': '-1 day',
   '7d':  '-7 days',
@@ -128,8 +134,14 @@ app.get('/api/leaderboard', (req, res) => {
   const modifier = WINDOWS[key];
   if (!modifier) return res.status(400).json({ error: 'Unknown window' });
 
-  const { players, totals } = db.getPlayerRanking(modifier);
-  noStore(res).json({ window: key, players, totals });
+  const diff = typeof req.query.difficulty === 'string' ? req.query.difficulty : 'all';
+  if (diff !== 'all' && !DIFFICULTIES.includes(diff)) {
+    return res.status(400).json({ error: 'Unknown difficulty' });
+  }
+
+  const ids = diff === 'all' ? null : getIndex().byDifficulty[diff];
+  const { players, totals } = db.getPlayerRanking(modifier, ids);
+  noStore(res).json({ window: key, difficulty: diff, players, totals });
 });
 
 // ── GET /api/levels/stats ────────────────────
@@ -250,6 +262,12 @@ app.post('/api/completions', (req, res) => {
   // Clean 404 instead of a foreign-key constraint error from the insert.
   if (!db.levelExists(levelId)) {
     return res.status(404).json({ error: 'Level not found' });
+  }
+  // Fewer moves than the optimum is impossible, and it would buy a
+  // negative moves-over-optimal on the leaderboard.
+  const opt = getIndex().opts.get(levelId);
+  if (opt !== undefined && moves < opt) {
+    return res.status(400).json({ error: 'Invalid moves' });
   }
 
   const completionId = db.insertCompletion({ levelId, playerName: name, timeMs, moves });

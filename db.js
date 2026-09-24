@@ -85,22 +85,34 @@ const stmts = {
   `),
   countCompletions: db.prepare('SELECT COUNT(*) AS n FROM completions'),
 
+  setLevelOpt: db.prepare('UPDATE levels SET opt = ? WHERE id = ? AND opt IS NULL'),
+
   // ── Global leaderboard ──
-  // Every query takes an SQLite date modifier ('-30 days', '-1000 years'
-  // for all time). completed_at is UTC text in a sortable format, and
+  // @window is an SQLite date modifier ('-30 days', '-1000 years' for all
+  // time). completed_at is UTC text in a sortable format, and
   // datetime('now') is UTC too, so a plain string compare is correct.
+  //
+  // @ids scopes a query to one difficulty: a JSON array of level ids, or
+  // NULL for every level. Difficulty is graded in JS (Slide.difficulty),
+  // so the server hands SQLite the resulting ids rather than a label.
+  //
+  // avg_over is how many moves a run took beyond the level's optimum,
+  // averaged over runs. A level with no known optimum drops out of it.
   playerTotals: db.prepare(`
-    SELECT player_name,
-           COUNT(*)                      AS runs,
-           COUNT(DISTINCT level_id)      AS levels,
-           MIN(time_ms)                  AS best_time,
-           CAST(AVG(time_ms) AS INTEGER) AS avg_time,
-           SUM(time_ms)                  AS total_time,
-           MIN(moves)                    AS best_moves,
-           MAX(completed_at)             AS last_at
-    FROM completions
-    WHERE completed_at >= datetime('now', ?)
-    GROUP BY player_name
+    SELECT c.player_name,
+           COUNT(*)                        AS runs,
+           COUNT(DISTINCT c.level_id)      AS levels,
+           MIN(c.time_ms)                  AS best_time,
+           CAST(AVG(c.time_ms) AS INTEGER) AS avg_time,
+           SUM(c.time_ms)                  AS total_time,
+           MIN(c.moves)                    AS best_moves,
+           ROUND(AVG(c.moves - l.opt), 2)  AS avg_over,
+           MAX(c.completed_at)             AS last_at
+    FROM completions c
+    JOIN levels l ON l.id = c.level_id
+    WHERE c.completed_at >= datetime('now', @window)
+      AND (@ids IS NULL OR c.level_id IN (SELECT value FROM json_each(@ids)))
+    GROUP BY c.player_name
   `),
 
   // A crown is a level whose fastest time of ALL TIME is yours.
@@ -110,7 +122,8 @@ const stmts = {
   // widens and more rivals join the comparison — a player could hold 296
   // crowns over 30 days and 271 over all time. Correct arithmetic, but it
   // sits next to columns that only ever grow, so it reads as a defect.
-  // A record is a fact about the level, not about a date range.
+  // A record is a fact about the level, not about a date range. It does
+  // follow the difficulty: a Hard record is a record on a Hard level.
   playerCrowns: db.prepare(`
     SELECT player_name, COUNT(*) AS crowns
     FROM (
@@ -119,19 +132,23 @@ const stmts = {
                PARTITION BY level_id ORDER BY time_ms ASC, id ASC
              ) AS rn
       FROM completions
+      WHERE @ids IS NULL OR level_id IN (SELECT value FROM json_each(@ids))
     )
     WHERE rn = 1
     GROUP BY player_name
   `),
 
   windowTotals: db.prepare(`
-    SELECT COUNT(*)                    AS runs,
-           COUNT(DISTINCT player_name) AS players,
-           COUNT(DISTINCT level_id)    AS levels,
-           MIN(time_ms)                AS best_time,
-           SUM(time_ms)                AS total_time
-    FROM completions
-    WHERE completed_at >= datetime('now', ?)
+    SELECT COUNT(*)                       AS runs,
+           COUNT(DISTINCT c.player_name)  AS players,
+           COUNT(DISTINCT c.level_id)     AS levels,
+           MIN(c.time_ms)                 AS best_time,
+           SUM(c.time_ms)                 AS total_time,
+           ROUND(AVG(c.moves - l.opt), 2) AS avg_over
+    FROM completions c
+    JOIN levels l ON l.id = c.level_id
+    WHERE c.completed_at >= datetime('now', @window)
+      AND (@ids IS NULL OR c.level_id IN (SELECT value FROM json_each(@ids)))
   `),
 
   getLevelById: db.prepare(`
@@ -228,6 +245,12 @@ module.exports = {
     return stmts.countCompletions.get().n;
   },
 
+  // Keeps an optimum the server had to solve for, so the leaderboard's
+  // moves-over-optimal can use it in SQL.
+  setLevelOpt(levelId, opt) {
+    stmts.setLevelOpt.run(opt, levelId);
+  },
+
   // Appends pack levels after the existing ones, skipping maps already
   // present. `replace` first drops every level AND every completion: a
   // time recorded on a level that no longer exists ranks nothing.
@@ -244,13 +267,15 @@ module.exports = {
     console.log(`Loaded ${importTx(levels, false)} levels from ${path.relative(__dirname, DEFAULT_PACK)}.`);
   },
 
-  // Ranked players for one time window.
-  // Activity (levels, runs, times) is window-scoped; records are not.
-  getPlayerRanking(modifier, limit = 100) {
+  // Ranked players for one time window, optionally one difficulty
+  // (`levelIds`: the ids of its levels). Activity (levels, runs, times,
+  // moves over optimal) is window-scoped; records are not.
+  getPlayerRanking(modifier, levelIds = null, limit = 100) {
+    const scope  = { window: modifier, ids: levelIds ? JSON.stringify(levelIds) : null };
     const crowns = new Map(
-      stmts.playerCrowns.all().map(r => [r.player_name, r.crowns]));
+      stmts.playerCrowns.all({ ids: scope.ids }).map(r => [r.player_name, r.crowns]));
 
-    const players = stmts.playerTotals.all(modifier)
+    const players = stmts.playerTotals.all(scope)
       .map(r => ({ ...r, crowns: crowns.get(r.player_name) ?? 0 }))
       .sort((a, b) =>
         (b.crowns - a.crowns) ||
@@ -259,7 +284,7 @@ module.exports = {
         (a.best_time - b.best_time) ||
         a.player_name.localeCompare(b.player_name));
 
-    return { players: players.slice(0, limit), totals: stmts.windowTotals.get(modifier) };
+    return { players: players.slice(0, limit), totals: stmts.windowTotals.get(scope) };
   },
 
   // Returns the new completion's rowid
