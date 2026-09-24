@@ -1,113 +1,21 @@
-// ─────────────────────────────────────────────
-//  BFS SOLVER
-//  Runs client-side on levels fetched from server.
-//  Returns minimum move count, or -1 if unsolvable.
-// ─────────────────────────────────────────────
-
-function slideInGrid(grid, rows, cols, r, c, dr, dc) {
-  while (true) {
-    const nr = r + dr, nc = c + dc;
-    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) break;
-    if (grid[nr][nc] === '#') break;
-    r = nr; c = nc;
-  }
-  return [r, c];
-}
-
-function solveLevel(rawLevel) {
-  const rows = rawLevel.length;
-  if (rows === 0) return -1;
-  const cols = rawLevel[0].length;
-  // A ragged map would let the player slide past the real edge.
-  if (rawLevel.some(row => row.length !== cols)) return -1;
-
-  const grid = rawLevel.map(row => row.split(''));
-
-  let sr, sc, gr, gc;
-  for (let r = 0; r < rows; r++)
-    for (let c = 0; c < cols; c++) {
-      if (grid[r][c] === 'S') { sr = r; sc = c; }
-      if (grid[r][c] === 'G') { gr = r; gc = c; }
-    }
-
-  // Without this guard a map missing S or G throws inside the BFS
-  // and one bad row blanks the whole level list.
-  if (sr === undefined || gr === undefined) return -1;
-
-  const key     = (r, c) => r * cols + c;
-  const visited = new Set([key(sr, sc)]);
-  let   queue   = [[sr, sc, 0]];
-  const DIRS    = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-
-  while (queue.length) {
-    const next = [];
-    for (const [r, c, dist] of queue) {
-      for (const [dr, dc] of DIRS) {
-        const [nr, nc] = slideInGrid(grid, rows, cols, r, c, dr, dc);
-        if (nr === r && nc === c) continue;
-        if (nr === gr && nc === gc) return dist + 1;
-        const k = key(nr, nc);
-        if (!visited.has(k)) { visited.add(k); next.push([nr, nc, dist + 1]); }
-      }
-    }
-    queue = next;
-  }
-  return -1;
-}
-
-// Returns the winning sequence of [dr, dc] steps, or null.
-// Used by the debug hook so an automated run is deterministic.
-function solvePath(rawLevel) {
-  const rows = rawLevel.length;
-  const cols = rawLevel[0].length;
-  const grid = rawLevel.map(row => row.split(''));
-
-  let sr, sc, gr, gc;
-  for (let r = 0; r < rows; r++)
-    for (let c = 0; c < cols; c++) {
-      if (grid[r][c] === 'S') { sr = r; sc = c; }
-      if (grid[r][c] === 'G') { gr = r; gc = c; }
-    }
-  if (sr === undefined || gr === undefined) return null;
-
-  const key  = (r, c) => r * cols + c;
-  const prev = new Map([[key(sr, sc), null]]);
-  const DIRS = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-  let queue  = [[sr, sc]];
-
-  while (queue.length) {
-    const next = [];
-    for (const [r, c] of queue) {
-      for (const [dr, dc] of DIRS) {
-        const [nr, nc] = slideInGrid(grid, rows, cols, r, c, dr, dc);
-        if (nr === r && nc === c) continue;
-        const k = key(nr, nc);
-        if (prev.has(k)) continue;
-        prev.set(k, { from: key(r, c), step: [dr, dc] });
-        if (nr === gr && nc === gc) {
-          const path = [];
-          let node = prev.get(k);
-          let at   = k;
-          while (node) { path.unshift(node.step); at = node.from; node = prev.get(at); }
-          return path;
-        }
-        next.push([nr, nc]);
-      }
-    }
-    queue = next;
-  }
-  return null;
-}
+// The rules of movement and the solver live in solver.js (window.Slide),
+// which the server loads too.
 
 // ─────────────────────────────────────────────
 //  DIFFICULTY
 // ─────────────────────────────────────────────
-function getDifficulty(optimalMoves, rows, cols) {
-  const score = optimalMoves + Math.floor((rows * cols) / 25);
-  if (score <= 4)  return { label: 'Easy',   cssClass: 'diff-easy'   };
-  if (score <= 8)  return { label: 'Medium',  cssClass: 'diff-medium' };
-  if (score <= 12) return { label: 'Hard',    cssClass: 'diff-hard'   };
+// levelgen/scoring.py orders the level pack by the same score; the
+// thresholds split the generated pack into rough quarters.
+function getDifficulty(optimalMoves, rows, cols, blocks = 0) {
+  const score = optimalMoves + Math.floor((rows * cols) / 25) + 2 * blocks;
+  if (score <= 10) return { label: 'Easy',   cssClass: 'diff-easy'   };
+  if (score <= 19) return { label: 'Medium',  cssClass: 'diff-medium' };
+  if (score <= 29) return { label: 'Hard',    cssClass: 'diff-hard'   };
   return                   { label: 'Expert', cssClass: 'diff-expert' };
+}
+
+function blocksText(n) {
+  return `${n} block${n === 1 ? '' : 's'}`;
 }
 
 // ─────────────────────────────────────────────
@@ -116,7 +24,7 @@ function getDifficulty(optimalMoves, rows, cols) {
 //  travels in a shared link, so two devices that open
 //  the same link get the same maze.
 // ─────────────────────────────────────────────
-let LEVELS = [];              // { id, seq, rows, cols, opt, diff, diffClass } — no maps
+let LEVELS = [];              // { id, seq, rows, cols, opt, blocks, diff, diffClass } — no maps
 const BY_ID  = new Map();     // id -> level (playable only)
 const ALL_IDS = new Set();    // every id the server sent, playable or not
 let VIEW   = [];              // ids, filter + sort applied (browse order only)
@@ -156,16 +64,12 @@ function personalBest(id) {
 // ─────────────────────────────────────────────
 const state = {
   levelId: null,       // server ID of the current level — the only identity
-  grid: [],
+  level: null,         // Slide.parseLevel(map): walls, goal, start cells
   rows: 0,
   cols: 0,
-  playerRow: 0,
-  playerCol: 0,
-  startRow: 0,
-  startCol: 0,
-  goalRow: 0,
-  goalCol: 0,
-  moves: 0,
+  pieces: [],          // [{ id, cell }]; pieces[0] is the player (1), then blocks 2-4
+  selected: 1,         // id of the piece the arrows move
+  moves: 0,            // every move of every piece counts
   timeMs: 0,           // elapsed ms at win
   inputLocked: false,
   started: false,      // false while the ready gate is up
@@ -497,7 +401,8 @@ function cardHtml(lvl) {
         <span class="card-id">#${lvl.id}</span>
         <span class="card-diff ${lvl.diffClass}">${lvl.diff}</span>
       </div>
-      <div class="card-meta">${lvl.cols}×${lvl.rows} · opt ${lvl.opt}</div>
+      <div class="card-meta">${lvl.cols}×${lvl.rows} · opt ${lvl.opt}${lvl.blocks
+        ? ` · <span class="card-blocks" title="${blocksText(lvl.blocks)} to move">&#9632;${lvl.blocks}</span>` : ''}</div>
       <div class="card-stats">${escapeHtml(stats)}</div>
       ${mine !== null ? `<div class="card-you">you ${formatTime(mine)}</div>` : ''}
       ${live > 0 ? `<div class="card-live"><span class="live-dot"></span>${live} here</div>` : ''}
@@ -718,19 +623,16 @@ async function loadMap(id) {
   return data.map;
 }
 
-function buildGrid(map) {
-  state.grid = [];
-  state.rows = map.length;
-  state.cols = map[0].length;
-  for (let r = 0; r < state.rows; r++) {
-    state.grid[r] = [];
-    for (let c = 0; c < state.cols; c++) {
-      const ch = map[r][c] ?? '.';
-      state.grid[r][c] = ch;
-      if (ch === 'S') { state.playerRow = r; state.playerCol = c; state.startRow = r; state.startCol = c; }
-      if (ch === 'G') { state.goalRow   = r; state.goalCol   = c; }
-    }
-  }
+// False when the map does not parse; the server never sends such a map.
+function buildBoard(map) {
+  const level = Slide.parseLevel(map);
+  if (!level) return false;
+  state.level    = level;
+  state.rows     = level.rows;
+  state.cols     = level.cols;
+  state.pieces   = level.pieces.map(p => ({ ...p }));
+  state.selected = 1;
+  return true;
 }
 
 async function enterLevel(id) {
@@ -757,7 +659,9 @@ async function enterLevel(id) {
   state.started     = false;
   state.mapReady    = false;
   isAnimating       = false;
-  state.grid        = [];
+  state.level       = null;
+  state.pieces      = [];
+  state.selected    = 1;
 
   // Unconditionally, and before anything else: startTimer() returns early
   // while an interval survives, which would keep an old startTime and post
@@ -774,6 +678,11 @@ async function enterLevel(id) {
   diffEl.textContent = lvl.diff;
   diffEl.className   = lvl.diffClass;
   document.getElementById('detail-best').textContent = bestLine(id);
+  const blocksEl = document.getElementById('detail-blocks');
+  blocksEl.textContent = blocksText(lvl.blocks);
+  blocksEl.classList.toggle('hidden', !lvl.blocks);
+  document.getElementById('hint-pieces').classList.toggle('hidden', !lvl.blocks);
+  renderPieceBar();
 
   showScreen('play');
   boardEl.innerHTML = '';
@@ -788,10 +697,10 @@ async function enterLevel(id) {
   let map = null;
   try { map = await loadMap(id); } catch { /* handled below */ }
   if (token !== state.navToken) return;          // the player already moved on
-  if (!map) { goBrowse(`Level #${id} could not be loaded.`); return; }
+  if (!map || !buildBoard(map)) { goBrowse(`Level #${id} could not be loaded.`); return; }
 
-  buildGrid(map);
   render();
+  renderPieceBar();
   boardEl.classList.add('concealed');
   state.mapReady = true;
   if (auto) startRun();
@@ -805,6 +714,7 @@ const TILE_GAP  = 2;   // must match the `gap` on #board in style.css
 const TILE_CHROME = 8; // #board padding + border, both axes
 
 function render() {
+  if (!state.level) return;   // the map has not arrived yet
   // Budget each axis separately, and subtract the gaps and the board chrome.
   // Dividing the raw budget by the tile count overshoots by ~10%, which is
   // the difference between fitting an 18-column board on a phone and not.
@@ -820,20 +730,25 @@ function render() {
   boardEl.style.setProperty('--tile-size', tileSize + 'px');
   boardEl.innerHTML = '';
 
-  for (let r = 0; r < state.rows; r++) {
-    for (let c = 0; c < state.cols; c++) {
-      const tile = document.createElement('div');
-      tile.classList.add('tile');
-      const ch = state.grid[r][c];
-      if (ch === '#') {
-        tile.classList.add('wall');
-      } else {
-        tile.classList.add('floor');
-        if (r === state.goalRow && c === state.goalCol) tile.classList.add('goal');
+  const { walls, goal } = state.level;
+  const occupant = new Map(state.pieces.map(p => [p.cell, p.id]));
+  // Numbers and the selection ring only mean something when there is a choice.
+  const labelled = state.pieces.length > 1;
+
+  for (let cell = 0; cell < state.rows * state.cols; cell++) {
+    const tile = document.createElement('div');
+    tile.classList.add('tile', walls[cell] ? 'wall' : 'floor');
+    if (cell === goal) tile.classList.add('goal');
+    const id = occupant.get(cell);
+    if (id !== undefined) {
+      tile.classList.add('piece', id === 1 ? 'player' : 'block');
+      tile.dataset.piece = id;
+      if (labelled) {
+        tile.textContent = id;
+        if (id === state.selected) tile.classList.add('selected');
       }
-      if (r === state.playerRow && c === state.playerCol) tile.classList.add('player');
-      boardEl.appendChild(tile);
     }
+    boardEl.appendChild(tile);
   }
 
   levelLabel.textContent  = `#${state.levelId}`;
@@ -841,78 +756,116 @@ function render() {
 }
 
 // ─────────────────────────────────────────────
+//  PIECE SELECTION
+//  1 is the player, 2-4 the blocks. Keys 1-4, a tap on
+//  a piece or on the bar below the board pick which one
+//  the arrows, swipes and d-pad move.
+// ─────────────────────────────────────────────
+function renderPieceBar() {
+  const bar = document.getElementById('piece-bar');
+  if (state.pieces.length < 2) {
+    bar.innerHTML = '';
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.innerHTML = state.pieces.map(({ id }) => `
+    <button class="piece-btn ${id === 1 ? 'player' : 'block'}" data-piece="${id}"
+            aria-label="${id === 1 ? 'Player' : `Block ${id}`} (key ${id})">${id}</button>
+  `).join('');
+  bar.classList.remove('hidden');
+  markSelected();
+}
+
+// Toggles classes in place: a re-render mid-slide would cut the animation.
+function markSelected() {
+  boardEl.querySelectorAll('.tile.piece').forEach(el =>
+    el.classList.toggle('selected', state.pieces.length > 1 && Number(el.dataset.piece) === state.selected));
+  document.querySelectorAll('#piece-bar .piece-btn').forEach(btn => {
+    const on = Number(btn.dataset.piece) === state.selected;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+}
+
+function selectPiece(id) {
+  if (!state.pieces.some(p => p.id === id)) return;
+  state.selected = id;
+  markSelected();
+}
+
+// ─────────────────────────────────────────────
 //  SLIDING ANIMATION
 // ─────────────────────────────────────────────
-function animatePlayer(fromRow, fromCol, toRow, toCol) {
-  if (fromRow === toRow && fromCol === toCol) return;
-
+function animatePiece(id, from, to) {
   const token = state.navToken;
   isAnimating = true;
+  let finished = false;
 
-  // getComputedStyle on a hidden element yields an empty string -> NaN.
-  const tileSize = parseInt(getComputedStyle(boardEl).getPropertyValue('--tile-size'), 10) || 0;
-  if (!tileSize) { isAnimating = false; return; }
-
-  const gap = 2;
-  const dx  = (fromCol - toCol) * (tileSize + gap);
-  const dy  = (fromRow - toRow) * (tileSize + gap);
-
-  const playerEl = boardEl.querySelector('.tile.player');
-  if (!playerEl) { isAnimating = false; return; }
-
-  playerEl.style.transition = 'none';
-  playerEl.style.transform  = `translate(${dx}px, ${dy}px)`;
-  playerEl.getBoundingClientRect(); // force reflow
-
-  playerEl.style.transition = 'transform 0.12s ease-out';
-  playerEl.style.transform  = 'translate(0, 0)';
-
-  function onDone() {
-    playerEl.style.transition = '';
-    playerEl.style.transform  = '';
+  // Idempotent, so the fallback timer of an earlier slide can never end a
+  // later one early or fire its win.
+  function onDone(el) {
+    if (finished) return;
+    finished = true;
+    if (el) { el.style.transition = ''; el.style.transform = ''; }
     isAnimating = false;
     // The player already left this level — never fire a stale win.
     if (token !== state.navToken) { state._pendingWin = false; return; }
     if (state._pendingWin) { state._pendingWin = false; onLevelComplete(); }
   }
 
-  playerEl.addEventListener('transitionend', onDone, { once: true });
+  // getComputedStyle on a hidden element yields an empty string -> NaN.
+  const tileSize = parseInt(getComputedStyle(boardEl).getPropertyValue('--tile-size'), 10) || 0;
+  const el = boardEl.querySelector(`.tile[data-piece="${id}"]`);
+  if (!tileSize || !el) { onDone(null); return; }
+
+  const cols = state.cols;
+  const dx   = (from % cols - to % cols) * (tileSize + TILE_GAP);
+  const dy   = (Math.floor(from / cols) - Math.floor(to / cols)) * (tileSize + TILE_GAP);
+
+  el.style.transition = 'none';
+  el.style.transform  = `translate(${dx}px, ${dy}px)`;
+  el.getBoundingClientRect(); // force reflow
+
+  el.style.transition = 'transform 0.12s ease-out';
+  el.style.transform  = 'translate(0, 0)';
+
+  el.addEventListener('transitionend', () => onDone(el), { once: true });
   // Fallback if transitionend never fires (hidden tab, etc.)
-  setTimeout(() => { if (isAnimating) onDone(); }, 180);
+  setTimeout(() => onDone(el), 180);
 }
 
 // ─────────────────────────────────────────────
 //  MOVEMENT
+//  Every piece slides until a wall or another piece
+//  stops it (Slide.slide). Only the player resting on
+//  the goal wins; a block may park on it.
 // ─────────────────────────────────────────────
-function isBlocked(r, c) {
-  if (r < 0 || r >= state.rows || c < 0 || c >= state.cols) return true;
-  return state.grid[r][c] === '#';
+function movePiece(id, dr, dc) {
+  if (state.inputLocked || isAnimating || !state.level) return;
+  const index = state.pieces.findIndex(p => p.id === id);
+  if (index === -1) return;
+
+  const from = state.pieces[index].cell;
+  const to   = Slide.slide(state.level, state.pieces.map(p => p.cell), index, dr, dc);
+  if (to === from) return;
+
+  state.pieces[index].cell = to;
+  state.moves++;
+  state._pendingWin = id === 1 && to === state.level.goal;
+
+  render();
+  animatePiece(id, from, to);
 }
 
 function move(dr, dc) {
-  if (state.inputLocked || isAnimating) return;
-
-  let r = state.playerRow, c = state.playerCol;
-  if (isBlocked(r + dr, c + dc)) return;
-
-  while (!isBlocked(r + dr, c + dc)) { r += dr; c += dc; }
-  if (r === state.playerRow && c === state.playerCol) return;
-
-  const fromRow = state.playerRow, fromCol = state.playerCol;
-  state.playerRow = r;
-  state.playerCol = c;
-  state.moves++;
-
-  state._pendingWin = (r === state.goalRow && c === state.goalCol);
-
-  render();
-  animatePlayer(fromRow, fromCol, r, c);
+  movePiece(state.selected, dr, dc);
 }
 
 // The first movement key both starts the run and performs the move.
-function tryMove(dr, dc) {
+function tryMove(dr, dc, id = state.selected) {
   if (!state.started) startRun();
-  move(dr, dc);
+  selectPiece(id);
+  movePiece(id, dr, dc);
 }
 
 // ─────────────────────────────────────────────
@@ -928,6 +881,9 @@ function showReadyGate(lvl, token) {
     <p class="overlay-meta">${lvl.cols}×${lvl.rows} &nbsp;·&nbsp; <span class="${lvl.diffClass}">${lvl.diff}</span> &nbsp;·&nbsp; optimal ${lvl.opt}</p>
     <p class="overlay-meta" id="gate-best">${escapeHtml(bestLine(lvl.id))}</p>
     <p class="overlay-meta ${live > 1 ? '' : 'hidden'}" id="gate-live">${live} playing now</p>
+    ${lvl.blocks ? `
+      <p class="gate-blocks">${blocksText(lvl.blocks)} slide just like you do &mdash; park them where you need a wall.
+        <br>Keys 1&ndash;${lvl.blocks + 1} or tap a piece to steer it. Every move counts.</p>` : ''}
     <p class="overlay-sub">${escapeHtml(lvl.name ?? `Level ${lvl.id}`)}</p>
     <button class="primary-btn" id="start-btn" ${state.mapReady ? '' : 'disabled'}>${state.mapReady ? 'Start' : 'Loading…'}</button>
     <p class="overlay-hint">Space &nbsp;·&nbsp; or just move</p>
@@ -1205,7 +1161,7 @@ function hideOverlay() {
 
 // ─────────────────────────────────────────────
 //  RESET
-//  Restores player to start and clears move count.
+//  Puts every piece back and clears the move count.
 //  The timer keeps running — it started when the player
 //  pressed Start, which is the fair moment to score from.
 // ─────────────────────────────────────────────
@@ -1220,11 +1176,12 @@ function resetLevel() {
   state._pendingWin = false;
   isAnimating       = false;
 
-  state.playerRow = state.startRow;
-  state.playerCol = state.startCol;
+  state.pieces   = state.level.pieces.map(p => ({ ...p }));
+  state.selected = 1;
 
   hideOverlay();
   render();
+  markSelected();
 }
 
 // ─────────────────────────────────────────────
@@ -1421,6 +1378,7 @@ document.addEventListener('keydown', e => {
   }
 
   switch (e.key) {
+    case '1': case '2': case '3': case '4': selectPiece(Number(e.key)); break;
     case 'ArrowUp':    case 'w': case 'W': tryMove(-1,  0); break;
     case 'ArrowDown':  case 's': case 'S': tryMove( 1,  0); break;
     case 'ArrowLeft':  case 'a': case 'A': tryMove( 0, -1); break;
@@ -1450,11 +1408,18 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Touch: swipe on the board ────────────────
+// A swipe that starts on a piece moves that piece; anywhere else it moves
+// the selected one. A tap falls through to the click handler below.
 let touchStart = null;
 
 boardEl.addEventListener('touchstart', e => {
   if (e.touches.length !== 1) return;
-  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  const pieceEl = e.target.closest('.tile[data-piece]');
+  touchStart = {
+    x: e.touches[0].clientX,
+    y: e.touches[0].clientY,
+    piece: pieceEl ? Number(pieceEl.dataset.piece) : state.selected,
+  };
 }, { passive: true });
 
 boardEl.addEventListener('touchend', e => {
@@ -1462,15 +1427,26 @@ boardEl.addEventListener('touchend', e => {
   const t  = e.changedTouches[0];
   const dx = t.clientX - touchStart.x;
   const dy = t.clientY - touchStart.y;
+  const piece = touchStart.piece;
   touchStart = null;
 
   const THRESHOLD = 24;
   if (Math.abs(dx) < THRESHOLD && Math.abs(dy) < THRESHOLD) return;
 
   e.preventDefault();   // the board only — #level-grid must still scroll
-  if (Math.abs(dx) > Math.abs(dy)) tryMove(0, dx > 0 ? 1 : -1);
-  else                             tryMove(dy > 0 ? 1 : -1, 0);
+  if (Math.abs(dx) > Math.abs(dy)) tryMove(0, dx > 0 ? 1 : -1, piece);
+  else                             tryMove(dy > 0 ? 1 : -1, 0, piece);
 }, { passive: false });
+
+boardEl.addEventListener('click', e => {
+  const pieceEl = e.target.closest('.tile[data-piece]');
+  if (pieceEl) selectPiece(Number(pieceEl.dataset.piece));
+});
+
+document.getElementById('piece-bar').addEventListener('click', e => {
+  const btn = e.target.closest('.piece-btn');
+  if (btn) selectPiece(Number(btn.dataset.piece));
+});
 
 // ── D-pad, shown on coarse pointers ──────────
 const dpad = document.getElementById('dpad');
@@ -1569,8 +1545,9 @@ async function boot() {
 
   for (const level of levels) {
     ALL_IDS.add(level.id);
-    const { label, cssClass } = getDifficulty(level.opt, level.rows, level.cols);
-    const o = { ...level, seq: LEVELS.length, diff: label, diffClass: cssClass };
+    const blocks = level.blocks ?? 0;   // absent in a list cached before blocks existed
+    const { label, cssClass } = getDifficulty(level.opt, level.rows, level.cols, blocks);
+    const o = { ...level, blocks, seq: LEVELS.length, diff: label, diffClass: cssClass };
     LEVELS.push(o);
     BY_ID.set(o.id, o);
   }
@@ -1606,25 +1583,30 @@ async function boot() {
 //  Makes an automated run deterministic. Not a security
 //  boundary — the leaderboard is already open to curl.
 // ─────────────────────────────────────────────
+// Solves from the start position, so it resets a run already under way.
+// Slide.solve searches every block arrangement in the browser: instant on
+// small boards, seconds on the largest three-block ones.
 async function autoSolve() {
   const map = MAPS.get(state.levelId);
   if (!map) return false;
   if (!state.started) startRun();
   if (!state.started) return false;
+  if (state.moves > 0) resetLevel();
 
-  const path = solvePath(map);
-  if (!path) return false;
+  const result = Slide.solve(map);
+  if (!result) return false;
 
-  for (const [dr, dc] of path) {
-    move(dr, dc);
+  for (const step of result.moves) {
+    const [dr, dc] = Slide.DIRS[step[1]];
+    tryMove(dr, dc, Number(step[0]));
     await new Promise(r => setTimeout(r, 200));
   }
   return true;
 }
 
 window.__slide = {
-  state, BY_ID, MAPS, loadMap,
-  enterLevel, move, tryMove, solveLevel, solvePath, autoSolve,
+  state, BY_ID, MAPS, loadMap, Slide,
+  enterLevel, move, movePiece, selectPiece, tryMove, autoSolve,
   startRun, goBrowse, goTop, loadTop, shareUrl, resetLevel,
   // Getters, because these three are reassigned, not mutated.
   get levels() { return LEVELS; },

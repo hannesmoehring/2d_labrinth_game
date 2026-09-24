@@ -9,3 +9,7 @@ puzzle.db-wal
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# Python (level generator)
+__pycache__/
+.pytest_cache/

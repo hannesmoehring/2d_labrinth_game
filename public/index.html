@@ -84,6 +84,7 @@
 
     <div id="level-details">
       <span id="detail-dims"></span>
+      <span id="detail-blocks" class="hidden"></span>
       <span id="detail-optimal"></span>
       <span id="detail-difficulty"></span>
       <span id="detail-best"></span>
@@ -94,6 +95,8 @@
       <div id="board"></div>
     </div>
 
+    <div id="piece-bar" class="hidden" role="group" aria-label="Piece to move"></div>
+
     <div id="share-slot"></div>
 
     <div id="dpad" class="hidden">
@@ -103,7 +106,7 @@
       <button class="dpad-btn dpad-right" data-dr="0"  data-dc="1"  aria-label="Right">&#9654;</button>
     </div>
 
-    <div id="controls-hint">Swipe or WASD / Arrows to move &nbsp;·&nbsp; R to reset &nbsp;·&nbsp; Esc for all levels</div>
+    <div id="controls-hint">Swipe or WASD / Arrows to move<span id="hint-pieces" class="hidden"> &nbsp;·&nbsp; 1&ndash;4 or tap to pick a piece</span> &nbsp;·&nbsp; R to reset &nbsp;·&nbsp; Esc for all levels</div>
   </main>
 
   <!-- Overlay: ready gate → name entry → leaderboard (content built by JS) -->
@@ -111,6 +114,7 @@
     <div id="overlay-box"></div>
   </div>
 
+  <script src="solver.js?v=3"></script>
   <script src="main.js?v=3"></script>
 </body>
 </html>

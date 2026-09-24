@@ -5,7 +5,7 @@ const express = require('express');
 const path    = require('path');
 const fs      = require('fs');
 const db      = require('./db');
-const { solveLevel } = require('./solver');
+const { parseLevel, solveLevel } = require('./public/solver');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -14,11 +14,18 @@ app.use(express.json({ limit: '8kb' }));
 
 // ─────────────────────────────────────────────
 //  LEVEL INDEX
-//  Solved once, held in memory. The browser gets sizes
+//  Held in memory. The browser gets sizes, block counts
 //  and move counts, never the maps: shipping thousands
 //  of mazes is both the slow part of a page load and a
 //  way to read a level before playing it.
+//
+//  The optimum comes from the database: the offline
+//  generator already searched every block arrangement,
+//  which is far too slow to redo on each start. Only a
+//  level stored without one is solved here.
 // ─────────────────────────────────────────────
+db.loadPackIfEmpty();
+
 let levelIndex = null;
 
 function buildIndex() {
@@ -29,20 +36,24 @@ function buildIndex() {
   const unplayable = [];
 
   for (const lvl of rows) {
-    const opt = solveLevel(lvl.map);
+    const level = parseLevel(lvl.map);
+    const opt   = !level ? -1 : (lvl.opt ?? solveLevel(lvl.map));
     if (opt === -1) { unplayable.push(lvl.id); continue; }
-    meta.push({ id: lvl.id, rows: lvl.map.length, cols: lvl.map[0].length, opt });
+    meta.push({
+      id: lvl.id, rows: level.rows, cols: level.cols, opt,
+      blocks: level.pieces.length - 1,
+    });
     maps.set(lvl.id, lvl.map);
   }
 
-  levelIndex = { meta, maps, unplayable, count: rows.length };
+  levelIndex = { meta, maps, unplayable, signature: db.levelSignature() };
   console.log(`Indexed ${meta.length} playable levels of ${rows.length} in ${Date.now() - started}ms.`);
   return levelIndex;
 }
 
-// Rebuild when the generator has added levels behind our back.
+// Rebuild when the importer has added or replaced levels behind our back.
 function getIndex() {
-  if (!levelIndex || levelIndex.count !== db.countLevels()) return buildIndex();
+  if (!levelIndex || levelIndex.signature !== db.levelSignature()) return buildIndex();
   return levelIndex;
 }
 
@@ -263,7 +274,7 @@ let htmlCache = null;
 
 function assetStamp() {
   let sum = 0;
-  for (const file of ['style.css', 'main.js']) {
+  for (const file of ['style.css', 'solver.js', 'main.js']) {
     try {
       const st = fs.statSync(path.join(PUBLIC_DIR, file));
       sum += Math.round(st.mtimeMs) + st.size;
@@ -277,7 +288,7 @@ function indexHtml() {
   if (htmlCache && htmlCache.stamp === stamp) return htmlCache.body;
 
   const raw  = fs.readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8');
-  const body = raw.replace(/(href|src)="(style\.css|main\.js)(\?v=[^"]*)?"/g,
+  const body = raw.replace(/(href|src)="(style\.css|solver\.js|main\.js)(\?v=[^"]*)?"/g,
                            `$1="$2?v=${stamp}"`);
   htmlCache = { stamp, body };
   return body;

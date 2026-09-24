@@ -2,7 +2,9 @@
 //  DATABASE  (better-sqlite3, synchronous)
 // ─────────────────────────────────────────────
 const Database = require('better-sqlite3');
+const fs       = require('fs');
 const path     = require('path');
+const { DEFAULT_PACK, readPack, problemWith } = require('./pack');
 
 const db = new Database(process.env.DB_PATH ?? path.join(__dirname, 'puzzle.db'));
 
@@ -19,7 +21,9 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT    NOT NULL,
     map         TEXT    NOT NULL,   -- JSON array of strings
-    order_index INTEGER NOT NULL
+    order_index INTEGER NOT NULL,
+    opt         INTEGER,            -- fewest moves; NULL = solve at startup
+    solution    TEXT                -- one optimal solution, e.g. "2L 1U"
   );
 
   CREATE TABLE IF NOT EXISTS completions (
@@ -36,117 +40,15 @@ db.exec(`
     ON completions(level_id, time_ms);
 `);
 
-// ── Seed levels on first run ─────────────────
-const SEED_LEVELS = [
-  { name: 'Level 1', map: [
-    "##########",
-    "#S.......#",
-    "#........#",
-    "#.......G#",
-    "##########",
-  ]},
-  { name: 'Level 2', map: [
-    "##########",
-    "#S.......#",
-    "#..####..#",
-    "#.....#G.#",
-    "##########",
-  ]},
-  { name: 'Level 3', map: [
-    "############",
-    "#S....#....#",
-    "#.....#....#",
-    "#..####....#",
-    "#..........#",
-    "#....#####.#",
-    "#.........G#",
-    "############",
-  ]},
-  { name: 'Level 4', map: [
-    "##########",
-    "#S#......#",
-    "#.#.####.#",
-    "#.#....#.#",
-    "#.######.#",
-    "#........#",
-    "######.#.#",
-    "#......#G#",
-    "##########",
-  ]},
-  { name: 'Level 5', map: [
-    "##############",
-    "#S...........#",
-    "#.###.....##.#",
-    "#.#.......#..#",
-    "#.#..###..#..#",
-    "#....#G#.....#",
-    "#....###.....#",
-    "#............#",
-    "##############",
-  ]},
-  { name: 'Level 6', map: [
-    "##############",
-    "#S...........#",
-    "#.##########.#",
-    "#.#..........#",
-    "#.#.########.#",
-    "#.#.#......#.#",
-    "#.#.#.####.#.#",
-    "#.#.#.#..#.#.#",
-    "#.#.#.#G.#.#.#",
-    "#.#.#....#.#.#",
-    "#.#.######.#.#",
-    "#.#........#.#",
-    "#.##########.#",
-    "#............#",
-    "##############",
-  ]},
-  { name: 'Level 7', map: [
-    "##############",
-    "#...#........#",
-    "#...#..####..#",
-    "#S..#..#..#..#",
-    "#...#..#..#..#",
-    "#######..#..##",
-    "#........#...#",
-    "#..#######...#",
-    "#............#",
-    "#..#######...#",
-    "#........#..G#",
-    "##############",
-  ]},
-  { name: 'Level 8', map: [
-    "################",
-    "#S.............#",
-    "#.###.######.#.#",
-    "#.#.........##.#",
-    "#.#.#######....#",
-    "#.#.#.....#.##.#",
-    "#.#.#.###.#.#..#",
-    "#.#.#...#.#.#..#",
-    "#.#.#.#.#.#.#..#",
-    "#.#.#.#.#.#.#..#",
-    "#...#.#.....#..#",
-    "#####.#######..#",
-    "#.............G#",
-    "################",
-  ]},
-];
-
-const levelCount = db.prepare('SELECT COUNT(*) AS n FROM levels').get().n;
-if (levelCount === 0) {
-  const insert = db.prepare('INSERT INTO levels (name, map, order_index) VALUES (?, ?, ?)');
-  const seed   = db.transaction((levels) => {
-    levels.forEach((lvl, i) => insert.run(lvl.name, JSON.stringify(lvl.map), i));
-  });
-  seed(SEED_LEVELS);
-  console.log(`Seeded ${SEED_LEVELS.length} levels.`);
-}
+// Databases created before blocks existed lack the two newer columns.
+const levelColumns = new Set(db.prepare('PRAGMA table_info(levels)').all().map(c => c.name));
+if (!levelColumns.has('opt'))      db.exec('ALTER TABLE levels ADD COLUMN opt INTEGER');
+if (!levelColumns.has('solution')) db.exec('ALTER TABLE levels ADD COLUMN solution TEXT');
 
 // ── Prepared statements ──────────────────────
 const stmts = {
   getAllLevels: db.prepare(`
-    SELECT id, name, map, order_index
+    SELECT id, name, map, order_index, opt
     FROM levels ORDER BY order_index
   `),
 
@@ -170,6 +72,18 @@ const stmts = {
   `),
 
   countLevels: db.prepare('SELECT COUNT(*) AS n FROM levels'),
+
+  // Changes whenever levels are added or replaced: AUTOINCREMENT never
+  // hands out an id twice, so MAX(id) moves even when COUNT(*) does not.
+  levelSignature: db.prepare('SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS maxId FROM levels'),
+
+  levelMaps:   db.prepare('SELECT map FROM levels'),
+  maxOrder:    db.prepare('SELECT COALESCE(MAX(order_index), -1) AS maxIdx FROM levels'),
+  insertLevel: db.prepare(`
+    INSERT INTO levels (name, map, order_index, opt, solution)
+    VALUES (?, ?, ?, ?, ?)
+  `),
+  countCompletions: db.prepare('SELECT COUNT(*) AS n FROM completions'),
 
   // ── Global leaderboard ──
   // Every query takes an SQLite date modifier ('-30 days', '-1000 years'
@@ -258,6 +172,22 @@ const stmts = {
   `),
 };
 
+const importTx = db.transaction((levels, replace) => {
+  if (replace) db.exec('DELETE FROM completions; DELETE FROM levels;');
+  const present = new Set(stmts.levelMaps.all().map(r => r.map));
+  let order = stmts.maxOrder.get().maxIdx + 1;
+  let added = 0;
+  for (const lvl of levels) {
+    const map = JSON.stringify(lvl.map);
+    if (present.has(map)) continue;
+    present.add(map);
+    const name = `Auto ${lvl.map[0].length}×${lvl.map.length} #${String(order + 1).padStart(3, '0')}`;
+    stmts.insertLevel.run(name, map, order++, lvl.opt ?? null, lvl.solution ?? null);
+    added++;
+  }
+  return added;
+});
+
 // ── Exported helpers ─────────────────────────
 module.exports = {
   getAllLevels() {
@@ -287,6 +217,31 @@ module.exports = {
 
   countLevels() {
     return stmts.countLevels.get().n;
+  },
+
+  levelSignature() {
+    const { n, maxId } = stmts.levelSignature.get();
+    return `${n}:${maxId}`;
+  },
+
+  countCompletions() {
+    return stmts.countCompletions.get().n;
+  },
+
+  // Appends pack levels after the existing ones, skipping maps already
+  // present. `replace` first drops every level AND every completion: a
+  // time recorded on a level that no longer exists ranks nothing.
+  // Returns how many levels were inserted.
+  importLevels(levels, { replace = false } = {}) {
+    return importTx(levels, replace);
+  },
+
+  // A fresh database gets the committed pack, so a new deploy has levels
+  // without anyone running the importer by hand.
+  loadPackIfEmpty() {
+    if (stmts.countLevels.get().n > 0 || !fs.existsSync(DEFAULT_PACK)) return;
+    const levels = readPack().filter(lvl => !problemWith(lvl));
+    console.log(`Loaded ${importTx(levels, false)} levels from ${path.relative(__dirname, DEFAULT_PACK)}.`);
   },
 
   // Ranked players for one time window.

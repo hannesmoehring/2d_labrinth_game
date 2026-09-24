@@ -21,9 +21,11 @@ COPY pixi.toml pixi.lock ./
 COPY --from=build /app/.pixi/envs/default .pixi/envs/default
 COPY --from=build /app/node_modules node_modules
 
-# Copy application source
-COPY server.js db.js solver.js generate-levels.js ./
+# Copy application source. The level pack is generated offline (Python is
+# not in this image); the server loads it into an empty database on start.
+COPY server.js db.js pack.js import-levels.js ./
 COPY public/ public/
+COPY levels/ levels/
 
 EXPOSE 3000
 

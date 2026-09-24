@@ -21,11 +21,31 @@ cxx-compiler = "*"
 make = "*"
 python = "*"
 
+# Level generation runs offline (it is CPU-heavy) and writes levels/levels.json,
+# which the Node side imports. Kept out of `default` so the image has no Python.
+[feature.levelgen.dependencies]
+python = "3.12.*"
+numpy = ">=2"
+pytest = "*"
+
+[feature.levelgen.tasks.generate-levels]
+description = "Generate levels/levels.json, e.g. `pixi run generate-levels --count 300`"
+cmd = "python -m levelgen generate"
+
+[feature.levelgen.tasks.check-levels]
+description = "Re-solve every level in levels/levels.json and verify its stored solution"
+cmd = "python -m levelgen check"
+
+[feature.levelgen.tasks.test-levelgen]
+description = "Run the level generator's test suite"
+cmd = "pytest -q levelgen/tests"
+
 [environments]
 default = { solve-group = "default" }
 build = { features = ["build"], solve-group = "default" }
+levelgen = { features = ["levelgen"], no-default-feature = true }
 
-# `start` and `generate-levels` deliberately don't depend on `install`: the
+# `start` and `import-levels` deliberately don't depend on `install`: the
 # Docker image runs them too, and there node_modules is baked in at build time.
 # `npm ci` would wipe it and the runtime image has no compilers to rebuild it.
 [tasks.install]
@@ -38,9 +58,9 @@ outputs = ["node_modules/.package-lock.json"]
 description = "Run the game server on http://localhost:3000"
 cmd = "node server.js"
 
-[tasks.generate-levels]
-description = "Append levels to the database, e.g. `pixi run generate-levels 30 --dry-run`"
-cmd = "node generate-levels.js"
+[tasks.import-levels]
+description = "Load levels/levels.json into the database; `--replace` drops old levels and their runs"
+cmd = "node import-levels.js"
 
 # ── Deployment (Docker Compose) ───────────────
 [tasks.deploy]
